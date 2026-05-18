@@ -28,7 +28,8 @@ public:
 
 private:
     // --- DSP Functions ---
-    float applyGate(float inputSample, float& envelope);
+    // Aggiungi il terzo parametro per il Gain
+    float applyGate(float inputSample, float& envelope, float& gainState, float releaseCoeff);
     float applyCompressor(float inputSample, float& envelope);
     float applyEnvelopeFollower(float inputSample, float& envelope);
     float detectPitchYIN(const float* audioBuffer, int bufferSize, double sampleRate);
@@ -47,11 +48,19 @@ private:
     // --- Noise Gate ---
     float gateThreshold = 0.01f;
     float gateAttack = 0.002f;
-    float gateRelease = 0.05f;
     float gateAttackCoeff = 0.0f;
-    float gateReleaseCoeff = 0.0f;
+
+    // Parametri separati per il Release
+    float gateReleaseGuitar = 0.05f;
+    float gateReleaseVoice = 0.2f;
+    float gateReleaseCoeffGuitar = 0.0f;
+    float gateReleaseCoeffVoice = 0.0f;
+
+    // Variabili di stato
     float gateEnvGuitar = 0.0f;
     float gateEnvVoice = 0.0f;
+    float gateGainGuitar = 0.0f;
+    float gateGainVoice = 0.0f;
 
     // --- Compressor ---
     float compThreshold = -20.0f;

@@ -81,7 +81,10 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
 
     // Pre-calculate DSP coefficients
     gateAttackCoeff = std::exp(-1.0f / (gateAttack * sampleRate));
-    gateReleaseCoeff = std::exp(-1.0f / (gateRelease * sampleRate));
+
+    // Calcolo separato dei coefficienti
+    gateReleaseCoeffGuitar = std::exp(-1.0f / (gateReleaseGuitar * sampleRate));
+    gateReleaseCoeffVoice = std::exp(-1.0f / (gateReleaseVoice * sampleRate));
 
     compAttackCoeff = std::exp(-1.0f / (compAttack * sampleRate));
     compReleaseCoeff = std::exp(-1.0f / (compRelease * sampleRate));
@@ -107,12 +110,12 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
     for (int i = 0; i < bufferToFill.numSamples; ++i)
     {
         // 1. Process Voice (Mic)
-        float voiceProcessed = applyGate(micIn[i], gateEnvVoice);
+        float voiceProcessed = applyGate(micIn[i], gateEnvVoice, gateGainVoice, gateReleaseCoeffVoice);
         voiceProcessed = applyCompressor(voiceProcessed, compEnvVoice);
         applyEnvelopeFollower(voiceProcessed, envVoice);
 
         // 2. Process Guitar
-        float guitarProcessed = applyGate(guitarIn[i], gateEnvGuitar);
+        float guitarProcessed = applyGate(guitarIn[i], gateEnvGuitar, gateGainGuitar, gateReleaseCoeffGuitar);
         guitarProcessed = applyCompressor(guitarProcessed, compEnvGuitar);
         applyEnvelopeFollower(guitarProcessed, envGuitar);
 
@@ -123,20 +126,40 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 
         if (samplesSinceLastAnalysis >= hopSize)
         {
-            // Unroll the circular buffer chronologically
+            // Srotola il buffer
             std::vector<float> frame(windowSize);
+            float energy = 0.0f;
+
             for (int j = 0; j < windowSize; ++j)
             {
                 frame[j] = circularBuffer[(writeIndex + j) % windowSize];
+                energy += frame[j] * frame[j]; // Somma dei quadrati
             }
 
-            // Run YIN Algorithm on the unrolled frame
-            detectedPitch = detectPitchYIN(frame.data(), windowSize, currentSampleRate);
+            // Calcolo dell'RMS (Root Mean Square) per misurare l'energia reale del blocco
+            float rms = std::sqrt(energy / windowSize);
 
-
-            if (detectedPitch > 0.0f)
+            // Esegui YIN solo se il segnale processato ha abbastanza energia
+            if (rms > 0.005f)
             {
-                sendPitchToSuperCollider(detectedPitch);
+                detectedPitch = detectPitchYIN(frame.data(), windowSize, currentSampleRate);
+
+                // Applichiamo i limiti: tra 70 Hz e 800 Hz
+                if (detectedPitch >= 70.0f && detectedPitch <= 800.0f)
+                {
+                    DBG("YIN Valid: " + juce::String(detectedPitch, 2) + " Hz (RMS: " + juce::String(rms, 4) + ")");
+                    sendPitchToSuperCollider(detectedPitch);
+                }
+                else if (detectedPitch > 0.0f)
+                {
+                    // Il pitch è stato rilevato, ma è un glitch palese (fuori dal range della chitarra)
+                    DBG("YIN Rejected: Out of bounds (" + juce::String(detectedPitch, 2) + " Hz)");
+                }
+            }
+            else
+            {
+                // Il gate ha chiuso il suono o siamo nel rumore di fondo
+                DBG("YIN Muted: RMS troppo basso (" + juce::String(rms, 4) + ")");
             }
 
             samplesSinceLastAnalysis = 0;
@@ -166,16 +189,23 @@ void MainComponent::resized()
 
 // --- DSP IMPLEMENTATIONS ---
 
-float MainComponent::applyGate(float inputSample, float& envelope)
+float MainComponent::applyGate(float inputSample, float& envelope, float& gainState, float releaseCoeff)
 {
     float rectified = std::abs(inputSample);
+
     if (rectified > envelope)
         envelope = gateAttackCoeff * envelope + (1.0f - gateAttackCoeff) * rectified;
     else
-        envelope = gateReleaseCoeff * envelope + (1.0f - gateReleaseCoeff) * rectified;
+        envelope = releaseCoeff * envelope + (1.0f - releaseCoeff) * rectified;
 
-    float gain = (envelope > gateThreshold) ? 1.0f : 0.0f;
-    return inputSample * gain;
+    float targetGain = (envelope > gateThreshold) ? 1.0f : 0.0f;
+
+    if (targetGain > gainState)
+        gainState = gateAttackCoeff * gainState + (1.0f - gateAttackCoeff) * targetGain;
+    else
+        gainState = releaseCoeff * gainState + (1.0f - releaseCoeff) * targetGain;
+
+    return inputSample * gainState;
 }
 
 float MainComponent::applyCompressor(float inputSample, float& envelope)
