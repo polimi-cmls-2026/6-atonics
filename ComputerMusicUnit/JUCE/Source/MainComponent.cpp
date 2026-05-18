@@ -65,8 +65,10 @@ void MainComponent::timerCallback()
     oscSender.send("/envelope/guitar", envGuitar);
     oscSender.send("/envelope/voice", envVoice);
 
-    // Aggiorna le scritte sulla UI
-    pitchDebugLabel.setText("Pitch: " + juce::String(detectedPitch, 1) + " Hz", juce::dontSendNotification);
+    juce::String debugText = "Chitarra: " + juce::String(detectedPitch, 1) + " Hz\n" +
+        "Voce (Grid): " + juce::String(detectedPitchVoice, 1) + " Hz";
+
+    pitchDebugLabel.setText(debugText, juce::dontSendNotification);
     envDebugLabel.setText("Env: " + juce::String(envGuitar, 3), juce::dontSendNotification);
 
     repaint();
@@ -78,6 +80,14 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     circularBuffer.assign(windowSize, 0.0f);
     writeIndex = 0;
     samplesSinceLastAnalysis = 0;
+
+    // Inizializzazione Buffer Voce
+    circularBufferVoice.assign(windowSize, 0.0f);
+    writeIndexVoice = 0;
+    samplesSinceLastAnalysisVoice = 0;
+
+    // Inizializza lo storico con 5 valori a zero
+    pitchHistoryVoice.assign(5, 0.0f);
 
     // Pre-calculate DSP coefficients
     gateAttackCoeff = std::exp(-1.0f / (gateAttack * sampleRate));
@@ -113,6 +123,53 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         float voiceProcessed = applyGate(micIn[i], gateEnvVoice, gateGainVoice, gateReleaseCoeffVoice);
         voiceProcessed = applyCompressor(voiceProcessed, compEnvVoice);
         applyEnvelopeFollower(voiceProcessed, envVoice);
+
+        // Scrittura nel buffer circolare della Voce
+        circularBufferVoice[writeIndexVoice] = voiceProcessed;
+        writeIndexVoice = (writeIndexVoice + 1) % windowSize;
+        samplesSinceLastAnalysisVoice++;
+
+        // Analisi YIN per la Voce
+        if (samplesSinceLastAnalysisVoice >= hopSize)
+        {
+            std::vector<float> frameVoice(windowSize);
+            float energyVoice = 0.0f;
+
+            for (int j = 0; j < windowSize; ++j)
+            {
+                frameVoice[j] = circularBufferVoice[(writeIndexVoice + j) % windowSize];
+                energyVoice += frameVoice[j] * frameVoice[j];
+            }
+
+            float rmsVoice = std::sqrt(energyVoice / windowSize);
+
+            if (rmsVoice > 0.005f)
+            {
+                detectedPitchVoice = detectPitchYIN(frameVoice.data(), windowSize, currentSampleRate);
+
+                // Range vocale umano (circa 70 Hz - 1000 Hz)
+                if (detectedPitchVoice >= 70.0f && detectedPitchVoice <= 1000.0f)
+                {
+                    float perfectlyTunedPitch = snapToGrid(detectedPitchVoice);
+
+                    // --- INIZIO FILTRO MEDIANO ---
+                    // Rimuovi il valore più vecchio e aggiungi il nuovo
+                    pitchHistoryVoice.erase(pitchHistoryVoice.begin());
+                    pitchHistoryVoice.push_back(perfectlyTunedPitch);
+
+                    // Crea una copia per ordinarla (senza toccare l'originale)
+                    std::vector<float> sortedHistory = pitchHistoryVoice;
+                    std::sort(sortedHistory.begin(), sortedHistory.end());
+
+                    // Prendi il valore centrale (il mediano)
+                    float medianPitch = sortedHistory[sortedHistory.size() / 2];
+                    // --- FINE FILTRO MEDIANO ---
+
+                    sendVocalPitchToSuperCollider(medianPitch);
+                }
+            }
+            samplesSinceLastAnalysisVoice = 0;
+        }
 
         // 2. Process Guitar
         float guitarProcessed = applyGate(guitarIn[i], gateEnvGuitar, gateGainGuitar, gateReleaseCoeffGuitar);
@@ -348,4 +405,27 @@ void MainComponent::loadPreset(int presetIndex)
         });
 
     DBG("Preset loaded: " + juce::String(presetIndex + 1));
+}
+
+float MainComponent::snapToGrid(float pitchHz)
+{
+    if (pitchHz <= 0.0f) return 0.0f;
+
+    // 1. Converti gli Hertz in nota MIDI continua
+    float midiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
+
+    // 2. Arrotonda al semitono esatto (quantizzazione)
+    float snappedMidi = std::round(midiNote);
+
+    // 3. Riconverti il valore MIDI arrotondato in Hertz
+    return 440.0f * std::pow(2.0f, (snappedMidi - 69.0f) / 12.0f);
+}
+
+void MainComponent::sendVocalPitchToSuperCollider(float pitchInHz)
+{
+    juce::OSCMessage message("/vocalPitch");
+    message.addFloat32(pitchInHz);
+
+    if (!oscSender.send(message))
+        juce::Logger::writeToLog("Error: Failed to send OSC vocal pitch message");
 }

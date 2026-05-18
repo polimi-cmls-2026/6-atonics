@@ -45,6 +45,19 @@ private:
     int samplesSinceLastAnalysis = 0;
     double currentSampleRate = 44100.0;
 
+    // --- Audio Analysis Buffer (Voice) ---
+    std::vector<float> circularBufferVoice;
+    int writeIndexVoice = 0;
+    int samplesSinceLastAnalysisVoice = 0;
+    float detectedPitchVoice = 0.0f;
+
+    // Nuova variabile per il filtro mediano
+    std::vector<float> pitchHistoryVoice;
+
+    // --- Nuove Funzioni ---
+    float snapToGrid(float pitchHz);
+    void sendVocalPitchToSuperCollider(float pitchInHz);
+
     // --- Noise Gate ---
     float gateThreshold = 0.01f;
     float gateAttack = 0.002f;
