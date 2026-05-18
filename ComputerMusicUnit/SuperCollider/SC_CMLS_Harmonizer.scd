@@ -10,8 +10,9 @@ s.boot;
 )
 
 (
-// 2. Variabili di Stato
-~rootFreq = 440;       // Frequenza fondamentale (ricevuta da JUCE)
+// 2. Variabili di Stato (AGGIORNATO con ~vocalPitch)
+~rootFreq = 440;       // Frequenza fondamentale dell'accordo
+~vocalPitch = 440;     // <-- MODIFICA: Memorizza l'ultimo pitch reale della voce per il PitchShift
 ~complexity = 1;       // Da 1 a 5 (controllata da Joystick asse Y)
 ~gain = 0.5;           // Volume (controllato da Joystick asse X)
 ~sourceSelect = 1;     // IMPOSTATO A 1: abilita la ricezione da /guitarPitch
@@ -39,46 +40,48 @@ OSCdef(\testChitarra, { |msg|
 
 
 (
-SynthDef(\vocalHarmonizer, {
-    arg freqs = #[440, 554, 659, 0, 0, 0], // Array di frequenze per l'accordo
-    amp = 0.5, gate = 1, vocalIn = 0;
+SynthDef(\trueHarmonizer, {
+    arg vocalPitch = 440, freqs = #[440, 554, 659, 0, 0, 0], amp = 0.5, gate = 1, vocalIn = 0, mix = 0.5;
 
-    var sig, modulator, carrier, combined;
-    var numBands = 16;
-    var bandFreqs = (1..numBands).collect({ |i| i.linexp(1, numBands, 100, 8000) });
+    var dryVoice, harmonies, pitchRatios, safeVocalPitch, sigHarmonies, finalSig;
 
-    // 1. FIX GLITCH: Applichiamo un lag (portamento) di 60 millisecondi alle frequenze
-    // Questo ignorerà gli spike temporanei dell'algoritmo YIN
-    var smoothFreqs = Lag.kr(freqs, 0.06);
+    // Ingresso microfono reale (Mono)
+    dryVoice = SoundIn.ar(vocalIn);
 
-    // --- MODULATOR: La tua voce reale dal microfono ---
-    modulator = SoundIn.ar(vocalIn);
+    safeVocalPitch = vocalPitch.max(70);
+    pitchRatios = freqs / safeVocalPitch;
 
-    // --- CARRIER: Il synth polifonico (Accordo) ---
-    // 2. FIX TIMBRO: Aggiungiamo un po' di PinkNoise al dente di sega per dare "fiato" alle consonanti
-    carrier = Mix.ar(Saw.ar(smoothFreqs * [1, 1.001], 0.2));
-    carrier = carrier + (PinkNoise.ar(0.08));
+    // Creazione delle voci armonizzate
+    harmonies = pitchRatios.collect({ |ratio, i|
+        var shifted;
+        
+        shifted = PitchShift.ar(
+            in: dryVoice,
+            windowSize: 0.03, 
+            pitchRatio: ratio,
+            pitchDispersion: 0.0, 
+            timeDispersion: 0.005 
+        );
 
-    // --- FILTER BANK (Vocoder Logic) ---
-    combined = bandFreqs.collect({ |f|
-        var modBand, carBand, env;
+        // Applichiamo un Filtro Passa-Basso per ammorbidire l'effetto "Chipmunk" sulle armonie
+        shifted = LPF.ar(shifted, 4500);
 
-        // 3. FIX VOLUME/ROBOT: Allarghiamo la banda dei filtri (rq da 0.1 a 0.35)
-        modBand = BPF.ar(modulator, f, 0.35);
-        env = Amplitude.kr(modBand, 0.02, 0.05);
+        shifted * (freqs[i] > 0);
+    });
 
-        carBand = BPF.ar(carrier, f, 0.35);
-        carBand * env;
-    }).sum;
+    // SPAZIALIZZAZIONE: invece di .sum, Splay distribuisce le armonie in stereo
+    sigHarmonies = Splay.ar(harmonies);
+    
+    // Crossfade: la dryVoice deve essere "sdoppiata" in stereo per il mix
+    finalSig = XFade2.ar(dryVoice ! 2, sigHarmonies, mix * 2 - 1);
+    
+    // RIVERBERO: Aggiunge profondità e amalgama voce e armonie
+    finalSig = FreeVerb.ar(finalSig, mix: 0.25, room: 0.6, damp: 0.5);
 
-    // Post-processing
-    // 4. FIX VOLUME: Compensiamo la perdita di inserzione dei filtri alzando il moltiplicatore
-    sig = combined * amp * 12;
-
-    // Guadagno compensato
-    sig = sig * EnvGen.kr(Env.asr(0.1, 1, 0.5), gate, doneAction: 2);
-
-    Out.ar(0, Pan2.ar(sig, 0));
+    // Inviluppo generale e uscita
+    finalSig = finalSig * amp * EnvGen.kr(Env.asr(0.05, 1, 0.1), gate, doneAction: 2);
+    
+    Out.ar(0, finalSig); // Niente Pan2 qui, finalSig è già stereo grazie a Splay
 }).add;
 )
 
@@ -98,21 +101,33 @@ SynthDef(\vocalHarmonizer, {
     (root.cpsmidi + semitones).midicps.extend(6, 0); // Converte in Hz e riempie l'array a 6
 };
 
-// --- RICEVITORI OSC ---
+// --- RICEVITORI OSC AGGIORNATI ---
 
 // 1. Pitch dalla Voce (da JUCE)
 OSCFunc({ |msg|
+    ~vocalPitch = msg[1]; // <-- MODIFICA: Salva SEMPRE l'intonazione vocale per aggiornare il Pitch Shifter
+
     if(~sourceSelect == 0) {
-        ~rootFreq = msg[1];
-        ~activeSynth.set(\freqs, ~getChordFreqs.(~rootFreq, ~complexity));
-    }
+        // Se la voce guida l'armonia, aggiorna anche la rootFreq
+        ~rootFreq = msg[1]; 
+        if(~activeSynth.notNil) {
+            ~activeSynth.set(\vocalPitch, ~vocalPitch, \freqs, ~getChordFreqs.(~rootFreq, ~complexity));
+        }
+    } {
+        // Se la chitarra guida l'armonia, aggiorna comunque il vocalPitch dentro al Synth attivo!
+        if(~activeSynth.notNil) {
+            ~activeSynth.set(\vocalPitch, ~vocalPitch);
+        }
+    };
 }, '/vocalPitch');
 
 // 2. Pitch dalla Chitarra (da JUCE)
 OSCFunc({ |msg|
     if(~sourceSelect == 1) {
-        ~rootFreq = msg[1];
-        ~activeSynth.set(\freqs, ~getChordFreqs.(~rootFreq, ~complexity));
+        ~rootFreq = msg[1]; // La chitarra detta l'accordo
+        if(~activeSynth.notNil) {
+            ~activeSynth.set(\freqs, ~getChordFreqs.(~rootFreq, ~complexity));
+        }
     }
 }, '/guitarPitch');
 
@@ -137,8 +152,8 @@ OSCFunc({ |msg|
 
 /*
 (
-// Inizia a suonare
-~activeSynth = Synth(\vocalHarmonizer, [\freqs, ~getChordFreqs.(440, 1), \amp, 0.5]);
+// Inizia a suonare (AGGIORNATO con il nome del nuovo Synth \trueHarmonizer)
+~activeSynth = Synth(\trueHarmonizer, [\freqs, ~getChordFreqs.(440, 1), \amp, 0.5]);
 
 // Funzione di test ciclico
 Routine({
@@ -155,6 +170,7 @@ Routine({
 }).play;
 )
 */
+
 // Per fermare tutto:
 // ~activeSynth.free;
 
