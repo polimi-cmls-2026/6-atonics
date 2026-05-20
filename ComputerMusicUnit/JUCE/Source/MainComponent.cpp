@@ -89,6 +89,10 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     // Inizializza lo storico con 5 valori a zero
     pitchHistoryVoice.assign(5, 0.0f);
 
+    pitchHistoryGuitar.assign(5, 0.0f); // Inizializza lo storico
+
+    lpfAlpha = 1.0f - std::exp(-2.0f * M_PI * lpfCutoffHz / currentSampleRate);
+
     // Pre-calculate DSP coefficients
     gateAttackCoeff = std::exp(-1.0f / (gateAttack * sampleRate));
 
@@ -143,7 +147,7 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 
             float rmsVoice = std::sqrt(energyVoice / windowSize);
 
-            if (rmsVoice > 0.005f)
+            if (rmsVoice > 0.015f)
             {
                 detectedPitchVoice = detectPitchYIN(frameVoice.data(), windowSize, currentSampleRate);
 
@@ -165,6 +169,9 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                     float medianPitch = sortedHistory[sortedHistory.size() / 2];
                     // --- FINE FILTRO MEDIANO ---
 
+                    // INSERISCI QUI LA RIGA DI DEBUG PER LA VOCE:
+                    DBG("DATA,Voice," + juce::String(medianPitch, 2) + "," + juce::String(rmsVoice, 4));
+
                     sendVocalPitchToSuperCollider(medianPitch);
                 }
             }
@@ -176,8 +183,10 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         guitarProcessed = applyCompressor(guitarProcessed, compEnvGuitar);
         applyEnvelopeFollower(guitarProcessed, envGuitar);
 
-        // 3. Write to circular buffer for Pitch Detection (Hop-size logic)
-        circularBuffer[writeIndex] = guitarProcessed;
+        // Applichiamo il filtro passa-basso (LPF) SOLO per il buffer di analisi
+        lpfState = lpfAlpha * guitarProcessed + (1.0f - lpfAlpha) * lpfState;
+        circularBuffer[writeIndex] = lpfState;
+
         writeIndex = (writeIndex + 1) % windowSize;
         samplesSinceLastAnalysis++;
 
@@ -204,19 +213,23 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                 // Applichiamo i limiti: tra 70 Hz e 800 Hz
                 if (detectedPitch >= 70.0f && detectedPitch <= 800.0f)
                 {
-                    DBG("YIN Valid: " + juce::String(detectedPitch, 2) + " Hz (RMS: " + juce::String(rms, 4) + ")");
-                    sendPitchToSuperCollider(detectedPitch);
+                    // --- INIZIO FILTRO MEDIANO CHITARRA ---
+                    pitchHistoryGuitar.erase(pitchHistoryGuitar.begin());
+                    pitchHistoryGuitar.push_back(detectedPitch);
+
+                    std::vector<float> sortedGuitarHistory = pitchHistoryGuitar;
+                    std::sort(sortedGuitarHistory.begin(), sortedGuitarHistory.end());
+                    float medianGuitarPitch = sortedGuitarHistory[sortedGuitarHistory.size() / 2];
+                    // --- FINE FILTRO MEDIANO CHITARRA ---
+
+                    DBG("DATA,Guitar," + juce::String(medianGuitarPitch, 2) + "," + juce::String(rms, 4));
+                    sendPitchToSuperCollider(medianGuitarPitch);
                 }
                 else if (detectedPitch > 0.0f)
                 {
                     // Il pitch è stato rilevato, ma è un glitch palese (fuori dal range della chitarra)
                     DBG("YIN Rejected: Out of bounds (" + juce::String(detectedPitch, 2) + " Hz)");
                 }
-            }
-            else
-            {
-                // Il gate ha chiuso il suono o siamo nel rumore di fondo
-                DBG("YIN Muted: RMS troppo basso (" + juce::String(rms, 4) + ")");
             }
 
             samplesSinceLastAnalysis = 0;
@@ -353,15 +366,6 @@ float MainComponent::detectPitchYIN(const float* audioBuffer, int bufferSize, do
 
 // --- OSC & PRESETS ---
 
-void MainComponent::sendPitchToSuperCollider(float pitchInHz)
-{
-    juce::OSCMessage message("/guitarPitch");
-    message.addFloat32(pitchInHz);
-
-    if (!oscSender.send(message))
-        juce::Logger::writeToLog("Error: Failed to send OSC pitch message");
-}
-
 void MainComponent::oscMessageReceived(const juce::OSCMessage& message)
 {
     if (message.getAddressPattern() == "/freeze" && message[0].isInt32())
@@ -411,21 +415,72 @@ float MainComponent::snapToGrid(float pitchHz)
 {
     if (pitchHz <= 0.0f) return 0.0f;
 
-    // 1. Converti gli Hertz in nota MIDI continua
-    float midiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
+    // 1. Converti in nota MIDI continua
+    float currentMidiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
 
-    // 2. Arrotonda al semitono esatto (quantizzazione)
-    float snappedMidi = std::round(midiNote);
+    // 2. Applica l'isteresi
+    if (lastSnappedMidiVoice < 0.0f)
+    {
+        // Primo ingresso in assoluto: arrotondamento standard (0.5)
+        lastSnappedMidiVoice = std::round(currentMidiNote);
+    }
+    else
+    {
+        // Se siamo già ancorati a una nota, richiediamo uno scostamento di > 0.65 
+        // per autorizzare il cambio di semitono.
+        if (std::abs(currentMidiNote - lastSnappedMidiVoice) > 0.65f)
+        {
+            lastSnappedMidiVoice = std::round(currentMidiNote);
+        }
+    }
 
-    // 3. Riconverti il valore MIDI arrotondato in Hertz
-    return 440.0f * std::pow(2.0f, (snappedMidi - 69.0f) / 12.0f);
+    // 3. Riconverti il MIDI ancorato in Hertz
+    return 440.0f * std::pow(2.0f, (lastSnappedMidiVoice - 69.0f) / 12.0f);
 }
 
 void MainComponent::sendVocalPitchToSuperCollider(float pitchInHz)
 {
+    // La voce passa già per snapToGrid e filtro mediano. 
+    // Se il valore è praticamente identico all'ultimo inviato, non fare nulla.
+    if (std::abs(pitchInHz - lastSentVoicePitch) < 0.1f)
+        return;
+
     juce::OSCMessage message("/vocalPitch");
     message.addFloat32(pitchInHz);
 
-    if (!oscSender.send(message))
+    if (oscSender.send(message))
+    {
+        lastSentVoicePitch = pitchInHz;
+        DBG("OSC Inviato -> Voce: " + juce::String(pitchInHz) + " Hz");
+    }
+    else
+    {
         juce::Logger::writeToLog("Error: Failed to send OSC vocal pitch message");
+    }
+}
+
+void MainComponent::sendPitchToSuperCollider(float pitchInHz)
+{
+    // La chitarra invia valori grezzi continui. Calcoliamo la distanza in centesimi.
+    if (lastSentGuitarPitch > 0.0f && pitchInHz > 0.0f)
+    {
+        float centsDiff = 1200.0f * std::abs(std::log2(pitchInHz / lastSentGuitarPitch));
+
+        // Se la variazione è minore della tolleranza, ignora il micro-scostamento
+        if (centsDiff < deadbandCents)
+            return;
+    }
+
+    juce::OSCMessage message("/guitarPitch");
+    message.addFloat32(pitchInHz);
+
+    if (oscSender.send(message))
+    {
+        lastSentGuitarPitch = pitchInHz;
+        DBG("OSC Inviato -> Chitarra: " + juce::String(pitchInHz) + " Hz");
+    }
+    else
+    {
+        juce::Logger::writeToLog("Error: Failed to send OSC pitch message");
+    }
 }

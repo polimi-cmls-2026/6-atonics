@@ -51,8 +51,13 @@ private:
     int samplesSinceLastAnalysisVoice = 0;
     float detectedPitchVoice = 0.0f;
 
+    // --- Variabile di stato per l'isteresi vocale ---
+    float lastSnappedMidiVoice = -1.0f;
+
     // Nuova variabile per il filtro mediano
     std::vector<float> pitchHistoryVoice;
+
+    std::vector<float> pitchHistoryGuitar; // Sotto a pitchHistoryVoice
 
     // --- Nuove Funzioni ---
     float snapToGrid(float pitchHz);
@@ -74,6 +79,16 @@ private:
     float gateEnvVoice = 0.0f;
     float gateGainGuitar = 0.0f;
     float gateGainVoice = 0.0f;
+
+    // --- Deadband State ---
+    float lastSentGuitarPitch = -1.0f;
+    float lastSentVoicePitch = -1.0f;
+    float deadbandCents = 15.0f; // Soglia di tolleranza per la chitarra (15 centesimi)
+
+    // --- LPF per l'analisi della chitarra ---
+    float lpfState = 0.0f;
+    float lpfCutoffHz = 350.0f; // Imposta comodamente gli Hertz qui
+    float lpfAlpha = 0.0f;
 
     // --- Compressor ---
     float compThreshold = -20.0f;
