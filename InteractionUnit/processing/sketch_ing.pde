@@ -9,9 +9,9 @@ NetAddress superColliderDest;
 NetAddress juceDest;
 
 // --- VARIABILI DATI SENSORI ---
-int targetPot = 1;     // Valore dell'encoder (da 1 a 4)
-int wetValue = 0;      // Valore WET (da 0 a 100)
-int button = 0;        // Valore pulsante (Toggle)
+int targetPot = 1;        // Valore dell'encoder (da 1 a 4)
+int wetValue = 0;         // Valore WET (da 0 a 100)
+int button = 0;           // Valore pulsante (Toggle)
 
 // --- VARIABILI PER L'ANIMAZIONE FLUIDA (GEOMETRIA) ---
 int currentDrawPot = 1;
@@ -19,7 +19,7 @@ float[] px = new float[4];
 float[] py = new float[4];
 
 // --- VARIABILI PER L'EFFETTO FREEZE E INTERPOLAZIONE WET ---
-float freezeIntensity = 0; 
+float freezeIntensity = 0;
 float iceTime = 0;         
 float displayBpm = 0;     // Variabile fluida per la transizione del gauge e delle opacità
 
@@ -28,58 +28,67 @@ String[] keys = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 int selectedKeyIndex = 0;  
 boolean dropdownOpen = false; 
 
+// --- VARIABILI DI STATO OSC (ANTISPAM ACCORDI) ---
+String lastSentRoot = "";
+String lastSentMode = "";
+
+// --- VARIABILI DI STATO OSC (ANTISPAM SENSORI) ---
+int lastArduinoPot = -1;
+int lastArduinoWet = -1;
+int lastArduinoButton = -1;
+
 String[] basicModes = {"Maggiore", "Minore"};
-String[] seventhModes = {"Maj7", "Min7", "Delta", "Min/Maj7"};
+String[] seventhModes = {"7", "Min7", "Delta", "Min/Maj7"};
 int selectedModeIndex = 0;
 boolean modeDropdownOpen = false;
 
 void setup() {
-  size(1000, 600); 
+  size(1000, 600);
   
   // SETUP ANIMAZIONE
   for (int i = 0; i < 4; i++) {
-    px[i] = 0; 
+    px[i] = 0;
     py[i] = 0;
   }
   
   // SETUP SERIALE
   printArray(Serial.list());
-  String portName = Serial.list()[7]; 
+  String portName = Serial.list()[7];
   myPort = new Serial(this, portName, 115200);
   myPort.bufferUntil('\n'); 
   
   // SETUP OSC
-  oscP5 = new OscP5(this, 12000); 
+  oscP5 = new OscP5(this, 12000);
   superColliderDest = new NetAddress("127.0.0.1", 57120); 
-  juceDest = new NetAddress("127.0.0.1", 8000);           
+  juceDest = new NetAddress("127.0.0.1", 8000);
 }
 
 void draw() {
   // --- 0. CONTROLLI DI SICUREZZA MENU ---
   String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
   if (selectedModeIndex >= currentModes.length) {
-    selectedModeIndex = 0; 
+    selectedModeIndex = 0;
   }
 
   // --- 1. LOGICA DI TRANSIZIONE FREEZE & VELOCITÀ ---
   if (button == 1) {
-    freezeIntensity = lerp(freezeIntensity, 1.0, 0.03); 
+    freezeIntensity = lerp(freezeIntensity, 1.0, 0.03);
   } else {
     freezeIntensity = lerp(freezeIntensity, 0.0, 0.08); 
   }
   
-  float velocitaMinima = 0.01;  
-  float velocitaMassima = 0.20; 
+  float velocitaMinima = 0.01;
+  float velocitaMassima = 0.10; 
   float bpmCostretto = constrain(wetValue, 0, 100);
-  float velocitaGhiaccio = map(wetValue, 0, 100, velocitaMinima, velocitaMassima);  
+  float velocitaGhiaccio = map(wetValue, 0, 100, velocitaMinima, velocitaMassima);
   iceTime += velocitaGhiaccio; 
   
   // Movimento graduale per l'interfaccia grafica (Lerp)
   displayBpm = lerp(displayBpm, bpmCostretto, 0.05);
-
+  
   // --- 2. SFONDO REATTIVO ---
   color sfondoNormale = color(30, 30, 30);       
-  color sfondoGhiaccio = color(25, 35, 50); 
+  color sfondoGhiaccio = color(25, 35, 50);
   background(lerpColor(sfondoNormale, sfondoGhiaccio, freezeIntensity));
   
   // --- TESTI DI STATO ---
@@ -92,7 +101,7 @@ void draw() {
   text("Pulsante (Button): " + button, 10, 70);
 
   // --- CALCOLO TARGET GEOMETRIA ---
-  float R = 100; 
+  float R = 100;
   float[] targetX = new float[4];
   float[] targetY = new float[4];
   
@@ -103,27 +112,26 @@ void draw() {
     targetX[3] = 0;   targetY[3] = 0;
   } 
   else if (targetPot == 2) {
-    targetX[0] = 0;   targetY[0] = -R; 
+    targetX[0] = 0;   targetY[0] = -R;
     targetX[1] = 0;   targetY[1] = R;  
     targetX[2] = 0;   targetY[2] = R;  
-    targetX[3] = 0;   targetY[3] = -R; 
+    targetX[3] = 0;   targetY[3] = -R;
   }
   else if (targetPot == 3) {
     targetX[0] = 0;   targetY[0] = -R; 
     targetX[1] = R;   targetY[1] = R;  
     targetX[2] = -R;  targetY[2] = R;  
-    targetX[3] = 0;   targetY[3] = -R; 
+    targetX[3] = 0;   targetY[3] = -R;
   }
   else if (targetPot == 4) {
     targetX[0] = R;   targetY[0] = -R; 
     targetX[1] = R;   targetY[1] = R;  
     targetX[2] = -R;  targetY[2] = R;  
-    targetX[3] = -R;  targetY[3] = -R; 
+    targetX[3] = -R;  targetY[3] = -R;
   }
   
   boolean inMovimento = false;
-  float velocita = 0.15; 
-  
+  float velocita = 0.15;
   for (int i = 0; i < 4; i++) {
     px[i] = lerp(px[i], targetX[i], velocita);
     py[i] = lerp(py[i], targetY[i], velocita);
@@ -134,13 +142,12 @@ void draw() {
   
   int puntiDaDisegnare = max(currentDrawPot, targetPot);
   if (!inMovimento) {
-    currentDrawPot = targetPot; 
+    currentDrawPot = targetPot;
   }
   
   // --- CONTENUTO 1: LA GEOMETRIA (1/3) ---
   pushMatrix();
-  translate(width / 3, height / 2); 
-  
+  translate(width / 3, height / 2);
   stroke(255, 150); 
   strokeWeight(3);
   noFill();
@@ -148,7 +155,7 @@ void draw() {
   if (puntiDaDisegnare > 1) {
     beginShape();
     for (int i = 0; i < puntiDaDisegnare; i++) {
-      vertex(px[i], py[i]); 
+      vertex(px[i], py[i]);
     }
     if (puntiDaDisegnare > 2) {
       endShape(CLOSE);
@@ -168,18 +175,18 @@ void draw() {
   popMatrix();
 
   // --- CONTENUTO 2: WET GAUGE CON ICONA REATTIVA (2/3) ---
-  pushMatrix(); 
+  pushMatrix();
   translate(2 * width / 3, height / 2 + 60); 
-  int diametro = 240; 
+  int diametro = 240;
   
-  // A. Il "Binario" di sfondo (Invariato)
+  // A. Il "Binario" di sfondo
   noFill();
   stroke(0, 150, 255, 30); 
   strokeWeight(10); 
   strokeCap(ROUND);
   arc(0, 0, diametro, diametro, radians(160), radians(380));
   
-  // B. La Barra di Progresso azzurra (Invariata)
+  // B. La Barra di Progresso azzurra
   float angoloProgresso = map(displayBpm, 0, 100, radians(160), radians(380));
   stroke(0, 200, 255); 
   strokeWeight(14); 
@@ -187,27 +194,23 @@ void draw() {
     arc(0, 0, diametro, diametro, radians(160), angoloProgresso);
   }
   
-// -------------------------------------------------------------
   // C. GEOMETRIA CENTRALE (OPACITÀ MASSIMA AL 50% WET)
-  // -------------------------------------------------------------
   float alphaCerchio = 0;
   float alphaLinea   = 0;
   
-  // Gestione della prima metà (da 0% a 50% WET)
   if (displayBpm <= 50) {
-    alphaCerchio = 255; // Il cerchio resta sempre visibile al massimo
-    alphaLinea   = map(displayBpm, 0, 50, 0, 255); // La linea compare gradualmente fino al max
-  } 
-  // Gestione della seconda metà (da 50% a 100% WET)
-  else {
-    alphaCerchio = map(displayBpm, 50, 100, 255, 0); // Il cerchio svanisce gradualmente
-    alphaLinea   = 255; // La linea resta fissa al massimo
+    alphaCerchio = 255;
+    alphaLinea   = map(displayBpm, 0, 50, 0, 255);
+  } else {
+    alphaCerchio = map(displayBpm, 50, 100, 255, 0);
+    alphaLinea   = 255;
   }
+  
   float cx = 0;
   float cy = 15;
   float dCerchio = 85;
   
-  // 1. Il Cerchio interno vuoto (sfuma da 255 a 0)
+  // 1. Il Cerchio interno vuoto
   if (alphaCerchio > 0.5) {
     noFill();
     stroke(0, 200, 255, alphaCerchio); 
@@ -215,7 +218,7 @@ void draw() {
     ellipse(cx, cy, dCerchio, dCerchio);
   }
   
-  // 2. La Linea Spezzata / Freccia tangente (sfuma da 0 a 255)
+  // 2. La Linea Spezzata / Freccia tangente (TUA calibrazione originale)
   if (alphaLinea > 0.5) {
     noFill();
     stroke(0, 200, 255, alphaLinea); 
@@ -230,8 +233,8 @@ void draw() {
     endShape();
   }
   
-  // 3. Il Numero fisso al centro del cerchio (Sempre opaco al 100%)
-  fill(0, 200, 255); 
+  // 3. Il Numero fisso al centro del cerchio
+  fill(0, 200, 255);
   textAlign(CENTER, CENTER); 
   textSize(32); 
   text(wetValue, cx, cy - 3); 
@@ -242,7 +245,7 @@ void draw() {
   text("WET %", 0, 85); 
   
   popMatrix();
-  
+
   // --- SLOT IN BASSO ---
   // Slot 1 (Sinistra): Tastiera Pianoforte
   pushMatrix();
@@ -250,52 +253,80 @@ void draw() {
   drawPianoSlot();
   popMatrix();
 
-  // Slot 2 (Centro): Dropdown Tonalità (Spostato a 420 per evitare conflitti d'apertura)
+  // Slot 2 (Centro): Dropdown Tonalità
   pushMatrix();
   translate(420, 500); 
   drawDropdownSlot();
   popMatrix();
-  
+
   // Slot 3 (Destra): Dropdown Modo
   pushMatrix();
   translate(820, 500); 
   drawModeSlot(currentModes);
   popMatrix();
-  
+
   // --- DISEGNO EFFETTO FREEZE PERIMETRALE ---
   drawFreezeEffect();
 }
 
 void drawFreezeEffect() {
   if (freezeIntensity < 0.01) return; 
-  noStroke(); fill(220, 245, 255, 200 * freezeIntensity); 
+  noStroke();
+  fill(220, 245, 255, 200 * freezeIntensity); 
   float step = 15; float maxInward = 40 * freezeIntensity; 
-  beginShape(); for (float x = 0; x <= width; x += step) { float n = noise(x * 0.1, iceTime); vertex(x, n * maxInward); } vertex(width, 0); vertex(0, 0); endShape(CLOSE);
-  beginShape(); for (float x = 0; x <= width; x += step) { float n = noise(x * 0.1, 500 + iceTime); vertex(x, height - (n * maxInward)); } vertex(width, height); vertex(0, height); endShape(CLOSE);
-  beginShape(); for (float y = 0; y <= height; y += step) { float n = noise(y * 0.1, 1000 + iceTime); vertex(n * maxInward, y); } vertex(0, height); vertex(0, 0); endShape(CLOSE);
-  beginShape(); for (float y = 0; y <= height; y += step) { float n = noise(y * 0.1, 1500 + iceTime); vertex(width - (n * maxInward), y); } vertex(width, height); vertex(width, 0); endShape(CLOSE);
-  noFill(); strokeWeight(15); for(int i = 0; i < 3; i++) { stroke(255, (15 - i*4) * freezeIntensity); rect(0, 0, width, height); }
+  beginShape();
+  for (float x = 0; x <= width; x += step) { float n = noise(x * 0.1, iceTime);
+  vertex(x, n * maxInward); } vertex(width, 0); vertex(0, 0); endShape(CLOSE);
+  beginShape();
+  for (float x = 0; x <= width; x += step) { float n = noise(x * 0.1, 500 + iceTime);
+  vertex(x, height - (n * maxInward)); } vertex(width, height); vertex(0, height); endShape(CLOSE);
+  beginShape();
+  for (float y = 0; y <= height; y += step) { float n = noise(y * 0.1, 1000 + iceTime);
+  vertex(n * maxInward, y); } vertex(0, height); vertex(0, 0); endShape(CLOSE);
+  beginShape();
+  for (float y = 0; y <= height; y += step) { float n = noise(y * 0.1, 1500 + iceTime);
+  vertex(width - (n * maxInward), y); } vertex(width, height); vertex(width, 0); endShape(CLOSE);
+  noFill(); strokeWeight(15);
+  for(int i = 0; i < 3; i++) { stroke(255, (15 - i*4) * freezeIntensity); rect(0, 0, width, height);
+  }
 }
+
 
 void serialEvent(Serial myPort) {
   try {
-    String val = myPort.readStringUntil('\n'); 
+    String val = myPort.readStringUntil('\n');
     if (val != null) {
-      val = trim(val); 
+      val = trim(val);
       if (val.startsWith("DATA,")) {
-        String[] parts = split(val, ','); 
+        String[] parts = split(val, ',');
         if (parts.length == 4) { 
-          targetPot = int(parts[1]); 
+          targetPot = int(parts[1]);
           wetValue = int(parts[2]);
           button = int(parts[3]);
           
-          OscMessage myMessage = new OscMessage("/arduino/sensors");
-          myMessage.add(targetPot);
-          myMessage.add(wetValue);
-          myMessage.add(button);
+          // CONTROLLO ANTISPAM SENSORI: Invia solo se c'è un cambiamento hardware
+          if (targetPot != lastArduinoPot || wetValue != lastArduinoWet || button != lastArduinoButton) {
+            
+            OscMessage myMessage = new OscMessage("/arduino/params");
+            myMessage.add(targetPot);
+            myMessage.add(wetValue);
+            myMessage.add(button);
+            
+            oscP5.send(myMessage, superColliderDest);
+            //oscP5.send(myMessage, juceDest);
+            
+            // Aggiorna la memoria
+            lastArduinoPot = targetPot;
+            lastArduinoWet = wetValue;
+            lastArduinoButton = button;
+            
+            // (Opzionale per debug)
+            // println("Inviato OSC Sensori: Pot:" + targetPot + " Wet:" + wetValue + " Btn:" + button);
+          }
           
-          oscP5.send(myMessage, superColliderDest);
-          oscP5.send(myMessage, juceDest);
+          // Chiamiamo sempre la funzione per l'accordo. 
+          // Non ti preoccupare: ha già il suo filtro antispam interno!
+          sendChordComplexity(); 
         }
       }
     }
@@ -303,32 +334,95 @@ void serialEvent(Serial myPort) {
 }
 
 void drawPianoSlot() {
-  int numTastiBianchi = 8; int larghezzaTasto = 22; int altezzaTasto = 80;
-  boolean playDo = true; boolean playSol = (targetPot >= 2); boolean playMi = (targetPot >= 3); boolean playSi = (targetPot >= 4);
-  color tastoSpento = color(200); color tastoAcceso = color(0, 200, 255); color tastoNeroColor = color(30);
+  int numTastiBianchi = 8;
+  int larghezzaTasto = 22; int altezzaTasto = 80;
+  color tastoSpento = color(200);
+  color tastoAcceso = color(0, 200, 255); color tastoNeroColor = color(30);
+  
+  // 1. RECUPERIAMO IL NOME DEL MODO ATTUALE
+  String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
+  int safeModeIndex = (selectedModeIndex >= currentModes.length) ? 0 : selectedModeIndex;
+  String mode = currentModes[safeModeIndex];
+  
+  // 2. CREIAMO IL PATTERN DELLE NOTE DELL'ACCORDO (semitoni rispetto alla fondamentale)
+  int[] intervalli = new int[targetPot];
+  intervalli[0] = 0; // Fondamentale
+  
+  if (targetPot >= 2) {
+    intervalli[1] = 7; // Quinta giusta
+  }
+  if (targetPot >= 3) {
+    // La terza cambia in base al modo
+    if (mode.equals("Minore") || mode.equals("Min7") || mode.equals("Min/Maj7")) {
+      intervalli[2] = 3; // Terza Minore
+    } else {
+      intervalli[2] = 4; // Terza Maggiore
+    }
+  }
+  if (targetPot == 4) {
+    // Gestione della settima
+    if (mode.equals("Delta") || mode.equals("Min/Maj7")) {
+      intervalli[3] = 11; // Settima Maggiore
+    } else if (mode.equals("7") || mode.equals("Min7")) {
+      intervalli[3] = 10; // Settima Minore
+    }
+  }
+
+  // Mappatura tasti bianchi (Do base = 0)
+  int[] notaTastoBianco = {0, 2, 4, 5, 7, 9, 11, 12}; 
+
+  // 3. DISEGNO DEI TASTI BIANCHI (Ancorati a Do = 0 come riferimento fisso)
   stroke(50); strokeWeight(2);
   for (int i = 0; i < numTastiBianchi; i++) {
-    if      (i == 0 && playDo)  fill(tastoAcceso); 
-    else if (i == 2 && playMi)  fill(tastoAcceso); 
-    else if (i == 4 && playSol) fill(tastoAcceso); 
-    else if (i == 6 && playSi)  fill(tastoAcceso); 
-    else                        fill(tastoSpento); 
+    int notaMidiTasto = notaTastoBianco[i];
+    
+    boolean notaAccesa = false;
+    for (int j = 0; j < intervalli.length; j++) {
+      // Sostituito selectedKeyIndex con 0 per bloccare la visualizzazione sul Do
+      if ((0 + intervalli[j]) % 12 == notaMidiTasto % 12) {
+        if (notaMidiTasto < 12 || (0 + intervalli[j]) >= 12) {
+          notaAccesa = true;
+        }
+      }
+    }
+    
+    if (notaAccesa) fill(tastoAcceso);
+    else fill(tastoSpento);
+    
     rect(i * larghezzaTasto, 0, larghezzaTasto, altezzaTasto, 0, 0, 3, 3);
   }
-  fill(tastoNeroColor); noStroke();
+
+  // 4. DISEGNO DEI TASTI NERI (Ancorati a Do = 0 come riferimento fisso)
   int larghezzaNero = 12; int altezzaNero = 45;
+  int[] notaTastoNero = {1, 3, -1, 6, 8, 10, -1}; 
+
   for (int i = 0; i < numTastiBianchi - 1; i++) {
-    if (i != 2 && i != 6) { 
+    if (notaTastoNero[i] != -1) {
+      int notaMidiNero = notaTastoNero[i];
       float xNero = (i * larghezzaTasto) + larghezzaTasto - (larghezzaNero / 2.0);
+      
+      boolean neroAcceso = false;
+      for (int j = 0; j < intervalli.length; j++) {
+        // Sostituito selectedKeyIndex con 0 per bloccare la visualizzazione sul Do
+        if ((0 + intervalli[j]) % 12 == notaMidiNero) {
+          neroAcceso = true;
+        }
+      }
+      
+      if (neroAcceso) fill(tastoAcceso);
+      else fill(tastoNeroColor);
+      
+      stroke(50); strokeWeight(1);
       rect(xNero, 0, larghezzaNero, altezzaNero, 0, 0, 2, 2);
     }
   }
+
+  // 5. TESTO DELL'ACCORDO IN BASSO (Mostra il nome effettivo dell'accordo selezionato)
   fill(200); textAlign(CENTER, TOP); textSize(14);
   float centroTastiera = (numTastiBianchi * larghezzaTasto) / 2.0;
   String root = keys[selectedKeyIndex];
-  String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
-  String mode = currentModes[selectedModeIndex];
   String nomeAccordo = "";
+  
   if (targetPot == 1) nomeAccordo = "ROOT (" + root + ")";
   else if (targetPot == 2) nomeAccordo = "POWER (" + root + "5)";
   else if (targetPot == 3) {
@@ -337,15 +431,15 @@ void drawPianoSlot() {
   }
   else if (targetPot == 4) {
     String suff = mode;
-    if (mode.equals("Delta")) suff = "Δ"; 
-    else if (mode.equals("Maj7")) suff = "maj7";
+    if (mode.equals("Delta")) suff = "Δ";
+    else if (mode.equals("7")) suff = "7";
     else if (mode.equals("Min7")) suff = "m7";
     else if (mode.equals("Min/Maj7")) suff = "m(maj7)";
     nomeAccordo = "SEVENTH (" + root + suff + ")";
   }
   text(nomeAccordo, centroTastiera, altezzaTasto + 15);
 }
-
+// RILETTURA DI DISEGNO CORRETTA (Senza blocchi mouse duplicati all'interno)
 void drawDropdownSlot() {
   int w = 120; int h = 30;
   fill(200); textAlign(CENTER, BOTTOM); textSize(12); text("TONALITÀ", w/2, -8);
@@ -354,57 +448,110 @@ void drawDropdownSlot() {
     for (int i = 0; i < keys.length; i++) {
       int itemY = -totalH + (i * itemH);
       float mX = mouseX - 420; float mY = mouseY - 500;
-      if (mX >= 0 && mX <= w && mY >= itemY && mY < itemY + itemH) fill(0, 130, 180); 
+      if (mX >= 0 && mX <= w && mY >= itemY && mY < itemY + itemH) fill(0, 130, 180);
       else if (i == selectedKeyIndex) fill(15, 60, 90); 
       else fill(40);
       stroke(60); strokeWeight(1); rect(0, itemY, w, itemH);
-      fill(255); textAlign(CENTER, CENTER); textSize(12); text(keys[i], w/2, itemY + itemH/2);
+      fill(255); textAlign(CENTER, CENTER); textSize(12);
+      text(keys[i], w/2, itemY + itemH/2);
     }
   }
   stroke(100); strokeWeight(1); if (dropdownOpen) fill(45, 65, 85); else fill(50);
   rect(0, 0, w, h, 4); fill(0, 200, 255); textAlign(CENTER, CENTER); textSize(14); text(keys[selectedKeyIndex], w/2 - 8, h/2);
-  fill(180); noStroke(); pushMatrix(); translate(w - 15, h/2); if (dropdownOpen) triangle(-4, 2, 4, 2, 0, -3); else triangle(-4, -2, 4, -2, 0, 3); popMatrix();
+  fill(180); noStroke(); pushMatrix();
+  translate(w - 15, h/2); if (dropdownOpen) triangle(-4, 2, 4, 2, 0, -3); else triangle(-4, -2, 4, -2, 0, 3);
+  popMatrix();
 }
 
 void drawModeSlot(String[] currentModes) {
   int w = 120; int h = 30;
-  fill(200); textAlign(CENTER, BOTTOM); textSize(12); text("MODO", w/2, -8);
+  fill(200); textAlign(CENTER, BOTTOM); textSize(12);
+  text("MODO", w/2, -8);
   if (modeDropdownOpen) {
     int itemH = 25; int totalH = currentModes.length * itemH;
     for (int i = 0; i < currentModes.length; i++) {
       int itemY = -totalH + (i * itemH);
       float mX = mouseX - 820; float mY = mouseY - 500;
-      if (mX >= 0 && mX <= w && mY >= itemY && mY < itemY + itemH) fill(0, 130, 180); 
+      if (mX >= 0 && mX <= w && mY >= itemY && mY < itemY + itemH) fill(0, 130, 180);
       else if (i == selectedModeIndex) fill(15, 60, 90); 
       else fill(40);
       stroke(60); strokeWeight(1); rect(0, itemY, w, itemH);
-      fill(255); textAlign(CENTER, CENTER); textSize(12); text(currentModes[i], w/2, itemY + itemH/2);
+      fill(255); textAlign(CENTER, CENTER); textSize(12);
+      text(currentModes[i], w/2, itemY + itemH/2);
     }
   }
   stroke(100); strokeWeight(1); if (modeDropdownOpen) fill(45, 65, 85); else fill(50);
   rect(0, 0, w, h, 4); fill(0, 200, 255); textAlign(CENTER, CENTER); textSize(14); text(currentModes[selectedModeIndex], w/2 - 8, h/2);
-  fill(180); noStroke(); pushMatrix(); translate(w - 15, h/2); if (modeDropdownOpen) triangle(-4, 2, 4, 2, 0, -3); else triangle(-4, -2, 4, -2, 0, 3); popMatrix();
+  fill(180); noStroke(); pushMatrix();
+  translate(w - 15, h/2); if (modeDropdownOpen) triangle(-4, 2, 4, 2, 0, -3); else triangle(-4, -2, 4, -2, 0, 3); popMatrix();
 }
 
+// GESTIONE UNICA DEI CLIC (Invia i dati OSC al rilascio o cambio selezione)
 void mousePressed() {
-  int s2X = 420, s2Y = 500, w = 120, h = 30; int s3X = 820, s3Y = 500;
-  if (mouseX >= s2X && mouseX <= s2X + w && mouseY >= s2Y && mouseY <= s2Y + h) { dropdownOpen = !dropdownOpen; if (dropdownOpen) modeDropdownOpen = false; return; }
-  if (mouseX >= s3X && mouseX <= s3X + w && mouseY >= s3Y && mouseY <= s3Y + h) { modeDropdownOpen = !modeDropdownOpen; if (modeDropdownOpen) dropdownOpen = false; return; }
+  int s2X = 420, s2Y = 500, w = 120, h = 30;
+  int s3X = 820, s3Y = 500;
+  
+  if (mouseX >= s2X && mouseX <= s2X + w && mouseY >= s2Y && mouseY <= s2Y + h) { 
+    dropdownOpen = !dropdownOpen;
+    if (dropdownOpen) modeDropdownOpen = false; 
+    return; 
+  }
+  if (mouseX >= s3X && mouseX <= s3X + w && mouseY >= s3Y && mouseY <= s3Y + h) { 
+    modeDropdownOpen = !modeDropdownOpen;
+    if (modeDropdownOpen) dropdownOpen = false; 
+    return; 
+  }
+  
   if (dropdownOpen) {
-    int itemH = 25; int totalH = keys.length * itemH;
+    int itemH = 25;
+    int totalH = keys.length * itemH;
     for (int i = 0; i < keys.length; i++) {
       int itemY = s2Y - totalH + (i * itemH);
-      if (mouseX >= s2X && mouseX <= s2X + w && mouseY >= itemY && mouseY < itemY + itemH) { selectedKeyIndex = i; dropdownOpen = false; return; }
+      if (mouseX >= s2X && mouseX <= s2X + w && mouseY >= itemY && mouseY < itemY + itemH) { 
+        selectedKeyIndex = i;
+        dropdownOpen = false; 
+        sendChordComplexity(); 
+        return; 
+      }
     }
-    dropdownOpen = false; 
+    dropdownOpen = false;
   }
+  
   if (modeDropdownOpen) {
     String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
     int itemH = 25; int totalH = currentModes.length * itemH;
     for (int i = 0; i < currentModes.length; i++) {
       int itemY = s3Y - totalH + (i * itemH);
-      if (mouseX >= s3X && mouseX <= s3X + w && mouseY >= itemY && mouseY < itemY + itemH) { selectedModeIndex = i; modeDropdownOpen = false; return; }
+      if (mouseX >= s3X && mouseX <= s3X + w && mouseY >= itemY && mouseY < itemY + itemH) { 
+        selectedModeIndex = i;
+        modeDropdownOpen = false; 
+        sendChordComplexity(); 
+        return; 
+      }
     }
     modeDropdownOpen = false; 
+  }
+}
+
+// FUNZIONE OSC COMPLESSITÀ ACCORDI (Con logica Antispam basata sulle stringhe)
+void sendChordComplexity() {
+  String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
+  int safeModeIndex = (selectedModeIndex >= currentModes.length) ? 0 : selectedModeIndex;
+  
+  String currentRoot = keys[selectedKeyIndex];
+  String currentMode = currentModes[safeModeIndex];
+  
+  // CONTROLLO: Invia solo se la parola della nota o la parola del modo sono cambiate
+  if (!currentRoot.equals(lastSentRoot) || !currentMode.equals(lastSentMode)) {
+    
+    OscMessage chordMsg = new OscMessage("/chord/complexity");
+    chordMsg.add(currentRoot); 
+    chordMsg.add(currentMode);
+    
+    oscP5.send(chordMsg, superColliderDest);
+    
+    // Aggiorna la memoria con le nuove parole
+    lastSentRoot = currentRoot;
+    lastSentMode = currentMode;
   }
 }
