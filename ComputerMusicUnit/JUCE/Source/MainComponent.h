@@ -28,7 +28,8 @@ public:
 
 private:
     // --- DSP Functions ---
-    float applyGate(float inputSample, float& envelope);
+    // Aggiungi il terzo parametro per il Gain
+    float applyGate(float inputSample, float& envelope, float& gainState, float releaseCoeff);
     float applyCompressor(float inputSample, float& envelope);
     float applyEnvelopeFollower(float inputSample, float& envelope);
     float detectPitchYIN(const float* audioBuffer, int bufferSize, double sampleRate);
@@ -44,14 +45,50 @@ private:
     int samplesSinceLastAnalysis = 0;
     double currentSampleRate = 44100.0;
 
+    // --- Audio Analysis Buffer (Voice) ---
+    std::vector<float> circularBufferVoice;
+    int writeIndexVoice = 0;
+    int samplesSinceLastAnalysisVoice = 0;
+    float detectedPitchVoice = 0.0f;
+
+    // --- Variabile di stato per l'isteresi vocale ---
+    float lastSnappedMidiVoice = -1.0f;
+
+    // Nuova variabile per il filtro mediano
+    std::vector<float> pitchHistoryVoice;
+
+    std::vector<float> pitchHistoryGuitar; // Sotto a pitchHistoryVoice
+
+    // --- Nuove Funzioni ---
+    float snapToGrid(float pitchHz);
+    void sendVocalPitchToSuperCollider(float pitchInHz);
+
     // --- Noise Gate ---
     float gateThreshold = 0.01f;
-    float gateAttack = 0.01f;
-    float gateRelease = 0.1f;
+    float gateAttack = 0.002f;
     float gateAttackCoeff = 0.0f;
-    float gateReleaseCoeff = 0.0f;
+
+    // Parametri separati per il Release
+    float gateReleaseGuitar = 0.05f;
+    float gateReleaseVoice = 0.2f;
+    float gateReleaseCoeffGuitar = 0.0f;
+    float gateReleaseCoeffVoice = 0.0f;
+
+    // Variabili di stato
     float gateEnvGuitar = 0.0f;
     float gateEnvVoice = 0.0f;
+    float gateGainGuitar = 0.0f;
+    float gateGainVoice = 0.0f;
+
+    // --- Deadband State ---
+    float lastSentGuitarPitch = -1.0f;
+    float lastSentVoicePitch = -1.0f;
+    float deadbandCents = 15.0f; // Soglia di tolleranza per la chitarra (15 centesimi)
+
+    // --- LPF per l'analisi della chitarra ---
+    float lpfState = 0.0f;
+    float lpfCutoffHz = 350.0f; // Imposta comodamente gli Hertz qui
+    float lpfAlpha = 0.0f;
 
     // --- Compressor ---
     float compThreshold = -20.0f;
@@ -65,8 +102,8 @@ private:
     float compEnvVoice = 0.0f;
 
     // --- Envelope Follower ---
-    float envFollowerAttack = 0.01f;
-    float envFollowerRelease = 0.3f;
+    float envFollowerAttack = 0.002f;
+    float envFollowerRelease = 0.05f;
     float envFollowerAttackCoeff = 0.0f;
     float envFollowerReleaseCoeff = 0.0f;
     float envGuitar = 0.0f;
@@ -102,6 +139,11 @@ private:
 
     int currentPreset = 0;
     juce::Label presetLabel;
+
+    juce::TextButton settingsButton;
+
+    juce::Label pitchDebugLabel;
+    juce::Label envDebugLabel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
