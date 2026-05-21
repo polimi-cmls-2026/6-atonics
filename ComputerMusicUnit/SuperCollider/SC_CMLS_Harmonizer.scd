@@ -2,8 +2,10 @@
 s.options.memSize = 65536;
 s.options.numOutputBusChannels = 2;
 s.options.numInputBusChannels = 2;
-s.options.inDevice = "Windows WASAPI : VoiceMeeter Aux Output (VB-Audio VoiceMeeter AUX VAIO)";
-s.options.outDevice = "Windows WASAPI : Altoparlanti (Conexant SmartAudio HD)";
+
+// Forza l'uso dell'ASIO virtuale di VoiceMeeter
+s.options.device = "ASIO : Voicemeeter AUX Virtual ASIO"; // Verificare il nome esatto stampando ServerOptions.devices
+
 s.boot;
 
 s.waitForBoot({
@@ -139,20 +141,34 @@ s.waitForBoot({
     // --- RICEVITORI OSC ---
     OSCdef.freeAll;
 
-    // Pitch da JUCE
+    // Pitch da JUCE (VOCE)
     OSCdef(\vocalPitch, { |msg|
         ~vocalPitch = msg[1];
+
+        // AGGIUNGI QUESTA RIGA PER IL DEBUG
+        "VOCE: % Hz".format(msg[1].round(0.01)).postln;
+
         if(~sourceSelect == 0) {
             ~rootFreq = msg[1];
             if(~activeSynth.notNil) {
                 ~activeSynth.set(\vocalPitch, ~vocalPitch, \freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
             }
         } {
-            if(~activeSynth.notNil) { ~activeSynth.set(\vocalPitch, ~vocalPitch); }
+            if(~activeSynth.notNil) {
+                ~activeSynth.set(
+                    \vocalPitch, ~vocalPitch,
+                    \freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch)
+                );
+            }
         };
     }, '/vocalPitch');
 
+    // Pitch da JUCE (CHITARRA)
     OSCdef(\guitarPitch, { |msg|
+
+        // AGGIUNGI QUESTA RIGA PER IL DEBUG
+        "CHITARRA: % Hz".format(msg[1].round(0.01)).postln;
+
         if(~sourceSelect == 1) {
             ~rootFreq = msg[1];
             if(~activeSynth.notNil) {
@@ -211,3 +227,6 @@ s.waitForBoot({
     "=============================".postln;
 });
 )
+
+OSCFunc.trace(true);
+OSCFunc.trace(false);
