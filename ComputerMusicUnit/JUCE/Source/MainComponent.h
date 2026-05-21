@@ -6,6 +6,7 @@
 #include <cmath>
 #include <vector>
 #include <array>
+#include <atomic>
 
 //==============================================================================
 class MainComponent : public juce::AudioAppComponent,
@@ -45,11 +46,19 @@ private:
     int samplesSinceLastAnalysis = 0;
     double currentSampleRate = 44100.0;
 
+    // VETTORI PRE-ALLOCATI PER L'ANALISI DELLA CHITARRA
+    std::vector<float> frameGuitar;
+    std::vector<float> sortedHistoryGuitar;
+
     // --- Audio Analysis Buffer (Voice) ---
     std::vector<float> circularBufferVoice;
     int writeIndexVoice = 0;
     int samplesSinceLastAnalysisVoice = 0;
     float detectedPitchVoice = 0.0f;
+
+    // VETTORI PRE-ALLOCATI PER L'ANALISI DELLA VOCE
+    std::vector<float> frameVoice;
+    std::vector<float> sortedHistoryVoice;
 
     // --- Variabile di stato per l'isteresi vocale ---
     float lastSnappedMidiVoice = -1.0f;
@@ -58,6 +67,9 @@ private:
     std::vector<float> pitchHistoryVoice;
 
     std::vector<float> pitchHistoryGuitar; // Sotto a pitchHistoryVoice
+
+    std::atomic<float> uiPitchVoice{ 0.0f };
+    std::atomic<float> uiPitchGuitar{ 0.0f };
 
     // --- Nuove Funzioni ---
     float snapToGrid(float pitchHz);

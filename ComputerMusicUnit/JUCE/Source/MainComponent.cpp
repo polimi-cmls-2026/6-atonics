@@ -62,11 +62,15 @@ MainComponent::~MainComponent()
 
 void MainComponent::timerCallback()
 {
+    // Leggiamo i valori in modo sicuro
+    float currentVoice = uiPitchVoice.load(std::memory_order_relaxed);
+    float currentGuitar = uiPitchGuitar.load(std::memory_order_relaxed);
+
     oscSender.send("/envelope/guitar", envGuitar);
     oscSender.send("/envelope/voice", envVoice);
 
-    juce::String debugText = "Chitarra: " + juce::String(detectedPitch, 1) + " Hz\n" +
-        "Voce (Grid): " + juce::String(detectedPitchVoice, 1) + " Hz";
+    juce::String debugText = "Chitarra: " + juce::String(currentGuitar, 1) + " Hz\n" +
+        "Voce: " + juce::String(currentVoice, 1) + " Hz";
 
     pitchDebugLabel.setText(debugText, juce::dontSendNotification);
     envDebugLabel.setText("Env: " + juce::String(envGuitar, 3), juce::dontSendNotification);
@@ -90,6 +94,13 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     pitchHistoryVoice.assign(5, 0.0f);
 
     pitchHistoryGuitar.assign(5, 0.0f); // Inizializza lo storico
+
+    // --- PRE-ALLOCAZIONE DEI VETTORI DI SUPPORTO ---
+    frameVoice.assign(windowSize, 0.0f);
+    sortedHistoryVoice.assign(5, 0.0f); // Corrisponde alla dimensione di pitchHistoryVoice
+
+    frameGuitar.assign(windowSize, 0.0f);
+    sortedHistoryGuitar.assign(5, 0.0f); // Corrisponde alla dimensione di pitchHistoryGuitar
 
     lpfAlpha = 1.0f - std::exp(-2.0f * M_PI * lpfCutoffHz / currentSampleRate);
 
@@ -136,7 +147,6 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         // Analisi YIN per la Voce
         if (samplesSinceLastAnalysisVoice >= hopSize)
         {
-            std::vector<float> frameVoice(windowSize);
             float energyVoice = 0.0f;
 
             for (int j = 0; j < windowSize; ++j)
@@ -161,16 +171,14 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                     pitchHistoryVoice.erase(pitchHistoryVoice.begin());
                     pitchHistoryVoice.push_back(perfectlyTunedPitch);
 
-                    // Crea una copia per ordinarla (senza toccare l'originale)
-                    std::vector<float> sortedHistory = pitchHistoryVoice;
-                    std::sort(sortedHistory.begin(), sortedHistory.end());
+                    std::copy(pitchHistoryVoice.begin(), pitchHistoryVoice.end(), sortedHistoryVoice.begin());
+                    std::sort(sortedHistoryVoice.begin(), sortedHistoryVoice.end());
 
                     // Prendi il valore centrale (il mediano)
-                    float medianPitch = sortedHistory[sortedHistory.size() / 2];
+                    float medianPitch = sortedHistoryVoice[sortedHistoryVoice.size() / 2];
                     // --- FINE FILTRO MEDIANO ---
 
-                    // INSERISCI QUI LA RIGA DI DEBUG PER LA VOCE:
-                    DBG("DATA,Voice," + juce::String(medianPitch, 2) + "," + juce::String(rmsVoice, 4));
+                    uiPitchVoice.store(medianPitch, std::memory_order_relaxed);
 
                     sendVocalPitchToSuperCollider(medianPitch);
                 }
@@ -192,14 +200,13 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 
         if (samplesSinceLastAnalysis >= hopSize)
         {
-            // Srotola il buffer
-            std::vector<float> frame(windowSize);
+            
             float energy = 0.0f;
 
             for (int j = 0; j < windowSize; ++j)
             {
-                frame[j] = circularBuffer[(writeIndex + j) % windowSize];
-                energy += frame[j] * frame[j]; // Somma dei quadrati
+                frameGuitar[j] = circularBuffer[(writeIndex + j) % windowSize];
+                energy += frameGuitar[j] * frameGuitar[j];
             }
 
             // Calcolo dell'RMS (Root Mean Square) per misurare l'energia reale del blocco
@@ -208,27 +215,23 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
             // Esegui YIN solo se il segnale processato ha abbastanza energia
             if (rms > 0.005f)
             {
-                detectedPitch = detectPitchYIN(frame.data(), windowSize, currentSampleRate);
+                detectedPitch = detectPitchYIN(frameGuitar.data(), windowSize, currentSampleRate);
 
-                // Applichiamo i limiti: tra 70 Hz e 800 Hz
-                if (detectedPitch >= 70.0f && detectedPitch <= 800.0f)
+                // Applichiamo i limiti: tra 60 Hz e 800 Hz
+                if (detectedPitch >= 60.0f && detectedPitch <= 800.0f)
                 {
                     // --- INIZIO FILTRO MEDIANO CHITARRA ---
                     pitchHistoryGuitar.erase(pitchHistoryGuitar.begin());
                     pitchHistoryGuitar.push_back(detectedPitch);
 
-                    std::vector<float> sortedGuitarHistory = pitchHistoryGuitar;
-                    std::sort(sortedGuitarHistory.begin(), sortedGuitarHistory.end());
-                    float medianGuitarPitch = sortedGuitarHistory[sortedGuitarHistory.size() / 2];
+                    std::copy(pitchHistoryGuitar.begin(), pitchHistoryGuitar.end(), sortedHistoryGuitar.begin());
+                    std::sort(sortedHistoryGuitar.begin(), sortedHistoryGuitar.end());
+                    float medianGuitarPitch = sortedHistoryGuitar[sortedHistoryGuitar.size() / 2];
                     // --- FINE FILTRO MEDIANO CHITARRA ---
 
-                    DBG("DATA,Guitar," + juce::String(medianGuitarPitch, 2) + "," + juce::String(rms, 4));
+                    uiPitchGuitar.store(medianGuitarPitch, std::memory_order_relaxed);
+
                     sendPitchToSuperCollider(medianGuitarPitch);
-                }
-                else if (detectedPitch > 0.0f)
-                {
-                    // Il pitch è stato rilevato, ma è un glitch palese (fuori dal range della chitarra)
-                    DBG("YIN Rejected: Out of bounds (" + juce::String(detectedPitch, 2) + " Hz)");
                 }
             }
 
@@ -311,7 +314,7 @@ float MainComponent::applyEnvelopeFollower(float inputSample, float& envelope)
 
 float MainComponent::detectPitchYIN(const float* audioBuffer, int bufferSize, double sampleRate)
 {
-    int tauMax = static_cast<int>(sampleRate / 80.0f);
+    int tauMax = static_cast<int>(sampleRate / 60.0f);
     int tauMin = static_cast<int>(sampleRate / 1200.0f);
     tauMax = juce::jmin(tauMax, bufferSize / 2);
 
