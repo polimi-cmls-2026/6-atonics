@@ -9,14 +9,14 @@ NetAddress superColliderDest;
 NetAddress juceDest;
 
 // --- VARIABILI DATI SENSORI ---
-int targetPot = 1;        // Valore dell'encoder (da 1 a 4)
+int targetPot = 2;        // Valore dell'encoder (da 1 a 4)
 int wetValue = 0;         // Valore WET (da 0 a 100)
 int button = 0;           // Valore pulsante (Toggle)
 
 // --- VARIABILI PER L'ANIMAZIONE FLUIDA (GEOMETRIA) ---
 int currentDrawPot = 1;
-float[] px = new float[4];
-float[] py = new float[4];
+float[] px = new float[5];
+float[] py = new float[5];
 
 float angoloProgresso = radians(160.5);
 
@@ -40,7 +40,7 @@ int lastArduinoWet = -1;
 int lastArduinoButton = -1;
 
 String[] basicModes = {"Maggiore", "Minore"};
-String[] seventhModes = {"7", "Min7", "Delta", "Min/Maj7"};
+// Removed detailed seventh modes: UI shows only basicModes now
 int selectedModeIndex = 0;
 boolean modeDropdownOpen = false;
 
@@ -67,7 +67,8 @@ void setup() {
 
 void draw() {
   // --- 0. CONTROLLI DI SICUREZZA MENU ---
-  String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
+  // Mostra sempre solo i due modi base nel menu a tendina
+  String[] currentModes = basicModes;
   if (selectedModeIndex >= currentModes.length) {
     selectedModeIndex = 0;
   }
@@ -103,37 +104,47 @@ void draw() {
 
   // --- CALCOLO TARGET GEOMETRIA ---
   float R = 100;
-  float[] targetX = new float[4];
-  float[] targetY = new float[4];
+  float[] targetX = new float[5];
+  float[] targetY = new float[5];
   
+  // if (targetPot == 1) {
+  //   targetX[0] = 0;   targetY[0] = 0;
+  //   targetX[1] = 0;   targetY[1] = 0;
+  //   targetX[2] = 0;   targetY[2] = 0;
+  //   targetX[3] = 0;   targetY[3] = 0;
+  // } 
   if (targetPot == 1) {
-    targetX[0] = 0;   targetY[0] = 0;
-    targetX[1] = 0;   targetY[1] = 0;
-    targetX[2] = 0;   targetY[2] = 0;
-    targetX[3] = 0;   targetY[3] = 0;
-  } 
-  else if (targetPot == 2) {
     targetX[0] = 0;   targetY[0] = -R;
     targetX[1] = 0;   targetY[1] = R;  
     targetX[2] = 0;   targetY[2] = R;  
     targetX[3] = 0;   targetY[3] = -R;
+    targetX[4] = 0;   targetY[4] = R;
   }
-  else if (targetPot == 3) {
+  else if (targetPot == 2) {
     targetX[0] = 0;   targetY[0] = -R; 
     targetX[1] = R;   targetY[1] = R;  
     targetX[2] = -R;  targetY[2] = R;  
     targetX[3] = 0;   targetY[3] = -R;
+    targetX[4] = 0;   targetY[4] = -R;
   }
-  else if (targetPot == 4) {
+  else if (targetPot == 3) {
     targetX[0] = R;   targetY[0] = -R; 
     targetX[1] = R;   targetY[1] = R;  
     targetX[2] = -R;  targetY[2] = R;  
     targetX[3] = -R;  targetY[3] = -R;
+    targetX[4] = -R;   targetY[4] = -R;
+  }
+  else if (targetPot == 4) {
+    targetX[0] = 0;   targetY[0] = -R; 
+    targetX[1] = R*sin(PI*2/5);   targetY[1] = -R*cos(PI*2/5);  
+    targetX[2] = R*sin(PI*4/5);  targetY[2] = -R*cos(PI*4/5);  
+    targetX[3] = R*sin(PI*6/5);  targetY[3] = -R*cos(PI*6/5);
+    targetX[4] = R*sin(PI*8/5);   targetY[4] = -R*cos(PI*8/5);
   }
   
   boolean inMovimento = false;
   float velocita = 0.15;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 5; i++) {
     px[i] = lerp(px[i], targetX[i], velocita);
     py[i] = lerp(py[i], targetY[i], velocita);
     if (dist(px[i], py[i], targetX[i], targetY[i]) > 1.0) {
@@ -141,9 +152,9 @@ void draw() {
     }
   }
   
-  int puntiDaDisegnare = max(currentDrawPot, targetPot);
+  int puntiDaDisegnare = max(currentDrawPot, targetPot+1);
   if (!inMovimento) {
-    currentDrawPot = targetPot;
+    currentDrawPot = targetPot+1;
   }
   
   // --- CONTENUTO 1: LA GEOMETRIA (1/3) ---
@@ -339,8 +350,8 @@ void drawPianoSlot() {
   color tastoSpento = color(200);
   color tastoAcceso = color(0, 200, 255); color tastoNeroColor = color(30);
   
-  // 1. RECUPERIAMO IL NOME DEL MODO ATTUALE
-  String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
+  // 1. RECUPERIAMO IL NOME DEL MODO ATTUALE (mostriamo solo Maggiore/Minore)
+  String[] currentModes = basicModes;
   int safeModeIndex = (selectedModeIndex >= currentModes.length) ? 0 : selectedModeIndex;
   String mode = currentModes[safeModeIndex];
   
@@ -352,19 +363,20 @@ void drawPianoSlot() {
     intervalli[1] = 7; // Quinta giusta
   }
   if (targetPot >= 3) {
-    // La terza cambia in base al modo
-    if (mode.equals("Minore") || mode.equals("Min7") || mode.equals("Min/Maj7")) {
+    // La terza cambia in base al modo (solo Maggiore/Minore disponibili)
+    if (mode.equals("Minore")) {
       intervalli[2] = 3; // Terza Minore
     } else {
       intervalli[2] = 4; // Terza Maggiore
     }
   }
   if (targetPot == 4) {
-    // Gestione della settima
-    if (mode.equals("Delta") || mode.equals("Min/Maj7")) {
+    // Gestione della settima: con menu limitato a Maggiore/Minore,
+    // assumiamo Maggiore -> settima maggiore, Minore -> settima minore
+    if (mode.equals("Maggiore")) {
       intervalli[3] = 11; // Settima Maggiore
-    } else if (mode.equals("7") || mode.equals("Min7")) {
-      intervalli[3] = 10; // Settima Minore
+    } else {
+      intervalli[3] = 10; // Settima Minore (per "Minore")
     }
   }
 
@@ -430,11 +442,7 @@ void drawPianoSlot() {
     nomeAccordo = "TRIAD (" + root + suff + ")";
   }
   else if (targetPot == 4) {
-    String suff = mode;
-    if (mode.equals("Delta")) suff = "Δ";
-    else if (mode.equals("7")) suff = "7";
-    else if (mode.equals("Min7")) suff = "m7";
-    else if (mode.equals("Min/Maj7")) suff = "m(maj7)";
+    String suff = mode.equals("Minore") ? "m7" : "maj7";
     nomeAccordo = "SEVENTH (" + root + suff + ")";
   }
   text(nomeAccordo, centroTastiera, altezzaTasto + 15);
@@ -518,7 +526,7 @@ void mousePressed() {
   }
   
   if (modeDropdownOpen) {
-    String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
+    String[] currentModes = basicModes;
     int itemH = 25; int totalH = currentModes.length * itemH;
     for (int i = 0; i < currentModes.length; i++) {
       int itemY = s3Y - totalH + (i * itemH);
@@ -535,9 +543,9 @@ void mousePressed() {
 
 // FUNZIONE OSC COMPLESSITÀ ACCORDI (Con logica Antispam basata sulle stringhe)
 void sendChordComplexity() {
-  String[] currentModes = (targetPot == 4) ? seventhModes : basicModes;
+  String[] currentModes = basicModes;
   int safeModeIndex = (selectedModeIndex >= currentModes.length) ? 0 : selectedModeIndex;
-  
+
   String currentRoot = keys[selectedKeyIndex];
   String currentMode = currentModes[safeModeIndex];
   
