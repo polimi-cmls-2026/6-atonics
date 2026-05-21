@@ -1,5 +1,35 @@
 1) Creation of a new file Chordpitchdetection.h 
 
+FFT + Harmonic Product Spectrum (HPS)
+
+After applying a Hann window to reduce spectral leakage, we compute the FFT of the frame to get the magnitude spectrum — essentially a picture of which frequencies are present in the signal and how strong they are.
+The problem with a raw FFT on a chord is that you see many peaks (one per string, plus all their harmonics) and no obvious way to know which is the root. HPS solves this by exploiting a fundamental property of musical sounds: every pitched note produces energy at its fundamental frequency and at integer multiples of it (2×, 3×, 4×...). The algorithm downsamples the spectrum by those same integer factors and multiplies all the versions together. At most frequencies, the product stays small because the peaks don't align. But at the true fundamental of the lowest note, the peaks from every harmonic stack land on the same bin simultaneously — the product spikes dramatically there.
+Concretely: if the root is at 98 Hz (G2), there will be energy at 98, 196, 294, 392 Hz. Downsampling the spectrum by 2 shifts 196 Hz down to 98 Hz. Downsampling by 3 shifts 294 Hz down to 98 Hz. Multiplying everything together makes 98 Hz win by a large margin over any competing bin.
+A parabolic interpolation step then refines the detected bin to sub-bin precision, giving frequency accuracy well below the FFT's natural resolution.
+Finally, a 3-frame median filter smooths out occasional frame-to-frame errors, and an attack detector flushes that filter whenever the RMS rises sharply — so chord transitions aren't delayed by stale history from the previous chord.
+
 2) Modifications on MainComponent.h with respect to Damiano have been annotated with "MODIFICA" before each change
 
-3) Modifications on MainComponent.cpp with Respect to Damiano have been annotated with "ADDED","
+What has changed on the file: 
+
+- #include "ChordPitchDetector.h" at the top — the only new include.
+- hopSize = 1024 instead of 512 — your original hop was very short, which made the 5-frame median filter even slower. With hop 1024, each frame lasts ~23 ms instead of ~12 ms, and 3 frames are enough.
+- Comment on pitchHistoryGuitar — the vector stays declared to avoid breaking compilation, but it is no longer actively used (the guitar median is now handled inside ChordPitchDetector).
+- ChordPitchDetector chordDetector { 2048, 44100.0 } — the only genuinely new member. Everything else (presets, gate, compressor, OSC, UI) is strictly identical to your original.
+
+
+3) Modifications on MainComponent.cpp with Respect to Damiano have been annotated with "ADDED","MODIFIED" or "REMOVED" before each change
+
+What has changed on the file: 
+
+    prepareToPlay
+
+      MODIFIED — windowSize and hopSize explicitly reassigned here (2048/1024) to guarantee consistency with the FFT size, instead of relying on the header default values.
+      MODIFIED — median history sizes reduced from 5 to 3.
+      ADDED — chordDetector reinitialized with the actual runtime sample rate (ASIO may run at 48000 Hz, not only 44100).
+      REMOVED — the lpfAlpha calculation is kept for compilation safety but marked as obsolete.
+
+    getNextAudioBlock — bloc guitar
+
+      REMOVED — the two LPF lines (lpfState = ..., circularBuffer[writeIndex] = lpfState) replaced by a direct write with no filter.
+      MODIFIED — the entire YIN block (RMS calculation, detectPitchYIN, median sort, sendPitchToSuperCollider) replaced by the single call to chordDetector.detectChordRoot(...). The original block is quoted in the comment so you can trace back exactly what was removed.
