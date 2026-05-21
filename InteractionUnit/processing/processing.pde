@@ -18,10 +18,12 @@ int currentDrawPot = 1;
 float[] px = new float[4];
 float[] py = new float[4];
 
+float angoloProgresso = radians(160.5);
+
 // --- VARIABILI PER L'EFFETTO FREEZE E INTERPOLAZIONE WET ---
 float freezeIntensity = 0;
 float iceTime = 0;         
-float displayBpm = 0;     // Variabile fluida per la transizione del gauge e delle opacità
+float displayWet = 0;     // Variabile fluida per la transizione del gauge e delle opacità
 
 // --- VARIABILI PER I MENU A TENDINA (SLOT 2 e 3) ---
 String[] keys = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -77,14 +79,13 @@ void draw() {
     freezeIntensity = lerp(freezeIntensity, 0.0, 0.08); 
   }
   
-  float velocitaMinima = 0.01;
-  float velocitaMassima = 0.10; 
-  float bpmCostretto = constrain(wetValue, 0, 100);
+  float velocitaMinima = 0.008;
+  float velocitaMassima = 0.04; 
   float velocitaGhiaccio = map(wetValue, 0, 100, velocitaMinima, velocitaMassima);
   iceTime += velocitaGhiaccio; 
   
   // Movimento graduale per l'interfaccia grafica (Lerp)
-  displayBpm = lerp(displayBpm, bpmCostretto, 0.05);
+  displayWet = lerp(displayWet, wetValue, 0.15);
   
   // --- 2. SFONDO REATTIVO ---
   color sfondoNormale = color(30, 30, 30);       
@@ -97,7 +98,7 @@ void draw() {
   textSize(12);
   text("Bridge Serial -> OSC", 10, 10);
   text("Vertici (Encoder): " + targetPot, 10, 30);
-  text("Battito (Wet): " + wetValue, 10, 50);
+  text("Potenziometro (Wet): " + wetValue, 10, 50);
   text("Pulsante (Button): " + button, 10, 70);
 
   // --- CALCOLO TARGET GEOMETRIA ---
@@ -187,22 +188,21 @@ void draw() {
   arc(0, 0, diametro, diametro, radians(160), radians(380));
   
   // B. La Barra di Progresso azzurra
-  float angoloProgresso = map(displayBpm, 0, 100, radians(160), radians(380));
+  angoloProgresso = map(displayWet, 0, 100, radians(160.5), radians(380));
   stroke(0, 200, 255); 
   strokeWeight(14); 
-  if (displayBpm > 0.1) {
-    arc(0, 0, diametro, diametro, radians(160), angoloProgresso);
-  }
+  arc(0, 0, diametro, diametro, radians(160), angoloProgresso);
+  
   
   // C. GEOMETRIA CENTRALE (OPACITÀ MASSIMA AL 50% WET)
   float alphaCerchio = 0;
   float alphaLinea   = 0;
   
-  if (displayBpm <= 50) {
+  if (displayWet <= 50) {
     alphaCerchio = 255;
-    alphaLinea   = map(displayBpm, 0, 50, 0, 255);
+    alphaLinea   = map(displayWet, 0, 50, 0, 255);
   } else {
-    alphaCerchio = map(displayBpm, 50, 100, 255, 0);
+    alphaCerchio = map(displayWet, 50, 100, 255, 0);
     alphaLinea   = 255;
   }
   
@@ -273,7 +273,7 @@ void drawFreezeEffect() {
   if (freezeIntensity < 0.01) return; 
   noStroke();
   fill(220, 245, 255, 200 * freezeIntensity); 
-  float step = 15; float maxInward = 40 * freezeIntensity; 
+  float step = 4; float maxInward = 30 * freezeIntensity; 
   beginShape();
   for (float x = 0; x <= width; x += step) { float n = noise(x * 0.1, iceTime);
   vertex(x, n * maxInward); } vertex(width, 0); vertex(0, 0); endShape(CLOSE);
