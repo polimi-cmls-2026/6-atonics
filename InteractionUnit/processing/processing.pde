@@ -9,7 +9,7 @@ NetAddress superColliderDest;
 NetAddress juceDest;
 
 // --- VARIABILI DATI SENSORI ---
-int targetPot = 2;        // Valore dell'encoder (da 1 a 4)
+int targetPot = 1;        // Valore dell'encoder (da 1 a 4)
 int wetValue = 0;         // Valore WET (da 0 a 100)
 int button = 0;           // Valore pulsante (Toggle)
 
@@ -260,7 +260,7 @@ void draw() {
   // --- SLOT IN BASSO ---
   // Slot 1 (Sinistra): Tastiera Pianoforte
   pushMatrix();
-  translate(80, 460); 
+  translate(55, 460); 
   drawPianoSlot();
   popMatrix();
 
@@ -345,10 +345,11 @@ void serialEvent(Serial myPort) {
 }
 
 void drawPianoSlot() {
-  int numTastiBianchi = 8;
+  int numTastiBianchi = 10;
   int larghezzaTasto = 22; int altezzaTasto = 80;
   color tastoSpento = color(200);
-  color tastoAcceso = color(0, 200, 255); color tastoNeroColor = color(30);
+  color tastoAcceso = color(0, 200, 255);
+  color tastoNeroColor = color(30);
   
   // 1. RECUPERIAMO IL NOME DEL MODO ATTUALE (mostriamo solo Maggiore/Minore)
   String[] currentModes = basicModes;
@@ -356,48 +357,45 @@ void drawPianoSlot() {
   String mode = currentModes[safeModeIndex];
   
   // 2. CREIAMO IL PATTERN DELLE NOTE DELL'ACCORDO (semitoni rispetto alla fondamentale)
-  int[] intervalli = new int[targetPot];
+  int[] intervalli = new int[targetPot+1];
   intervalli[0] = 0; // Fondamentale
+  intervalli[1] = 7; // Quinta giusta (sempre presente dal secondo livello in su)
   
   if (targetPot >= 2) {
-    intervalli[1] = 7; // Quinta giusta
+    if (mode.equals("Minore")) {
+      intervalli[2] = 3; // Terza minore
+    } else {
+      intervalli[2] = 4; // Terza maggiore
+    }
   }
   if (targetPot >= 3) {
     // La terza cambia in base al modo (solo Maggiore/Minore disponibili)
     if (mode.equals("Minore")) {
-      intervalli[2] = 3; // Terza Minore
+      intervalli[3] = 10; // Settima minore
     } else {
-      intervalli[2] = 4; // Terza Maggiore
+      intervalli[3] = 11; // Settima mag 
+
     }
   }
   if (targetPot == 4) {
-    // Gestione della settima: con menu limitato a Maggiore/Minore,
-    // assumiamo Maggiore -> settima maggiore, Minore -> settima minore
-    if (mode.equals("Maggiore")) {
-      intervalli[3] = 11; // Settima Maggiore
-    } else {
-      intervalli[3] = 10; // Settima Minore (per "Minore")
-    }
+    // Gestione dell'accordo add9 (la nona maggiore dista 14 semitoni)
+    intervalli[4] = 14; 
   }
 
   // Mappatura tasti bianchi (Do base = 0)
-  int[] notaTastoBianco = {0, 2, 4, 5, 7, 9, 11, 12}; 
-
+  int[] notaTastoBianco = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16};
+  
   // 3. DISEGNO DEI TASTI BIANCHI (Ancorati a Do = 0 come riferimento fisso)
   stroke(50); strokeWeight(2);
   for (int i = 0; i < numTastiBianchi; i++) {
     int notaMidiTasto = notaTastoBianco[i];
-    
     boolean notaAccesa = false;
     for (int j = 0; j < intervalli.length; j++) {
       // Sostituito selectedKeyIndex con 0 per bloccare la visualizzazione sul Do
-      if ((0 + intervalli[j]) % 12 == notaMidiTasto % 12) {
-        if (notaMidiTasto < 12 || (0 + intervalli[j]) >= 12) {
-          notaAccesa = true;
-        }
+      if (intervalli[j]  == notaMidiTasto) {
+        notaAccesa = true;
       }
     }
-    
     if (notaAccesa) fill(tastoAcceso);
     else fill(tastoSpento);
     
@@ -405,9 +403,10 @@ void drawPianoSlot() {
   }
 
   // 4. DISEGNO DEI TASTI NERI (Ancorati a Do = 0 come riferimento fisso)
-  int larghezzaNero = 12; int altezzaNero = 45;
-  int[] notaTastoNero = {1, 3, -1, 6, 8, 10, -1}; 
-
+  int larghezzaNero = 12;
+  int altezzaNero = 45;
+  int[] notaTastoNero = {1, 3, -1, 6, 8, 10, -1, 13, 15};
+  
   for (int i = 0; i < numTastiBianchi - 1; i++) {
     if (notaTastoNero[i] != -1) {
       int notaMidiNero = notaTastoNero[i];
@@ -416,7 +415,7 @@ void drawPianoSlot() {
       boolean neroAcceso = false;
       for (int j = 0; j < intervalli.length; j++) {
         // Sostituito selectedKeyIndex con 0 per bloccare la visualizzazione sul Do
-        if ((0 + intervalli[j]) % 12 == notaMidiNero) {
+        if (intervalli[j] == notaMidiNero) {
           neroAcceso = true;
         }
       }
@@ -429,21 +428,26 @@ void drawPianoSlot() {
     }
   }
 
-  // 5. TESTO DELL'ACCORDO IN BASSO (Mostra il nome effettivo dell'accordo selezionato)
-  fill(200); textAlign(CENTER, TOP); textSize(14);
+  // 5. TESTO DELL'ACCORDO IN BASSO
+  fill(200); textAlign(CENTER, TOP);
+  textSize(14);
   float centroTastiera = (numTastiBianchi * larghezzaTasto) / 2.0;
   String root = keys[selectedKeyIndex];
   String nomeAccordo = "";
   
-  if (targetPot == 1) nomeAccordo = "ROOT (" + root + ")";
-  else if (targetPot == 2) nomeAccordo = "POWER (" + root + "5)";
-  else if (targetPot == 3) {
+  // if (targetPot == 1) nomeAccordo = "ROOT (" + root + ")";
+  if (targetPot == 1) nomeAccordo = "POWER (" + root + "5)";
+  else if (targetPot == 2) {
     String suff = mode.equals("Minore") ? "min" : "maj";
     nomeAccordo = "TRIAD (" + root + suff + ")";
   }
-  else if (targetPot == 4) {
-    String suff = mode.equals("Minore") ? "m7" : "maj7";
-    nomeAccordo = "SEVENTH (" + root + suff + ")";
+  else if (targetPot == 3) {
+    String suff = mode.equals("Minore") ? "min7" : "maj7";
+    nomeAccordo = "QUATRIAD (" + root + suff + ")";
+  }
+    else if (targetPot == 4) {
+    String suff = mode.equals("Minore") ? "min7 add9" : "maj7 add9";
+    nomeAccordo = "ALTERED(" + root + suff + ")";
   }
   text(nomeAccordo, centroTastiera, altezzaTasto + 15);
 }

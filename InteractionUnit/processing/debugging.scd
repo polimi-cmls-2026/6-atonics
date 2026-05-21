@@ -1,5 +1,3 @@
-
-s = Server.new();
 Server.default.options.inDevice_("Microfono MacBook Air");
 Server.default.options.outDevice_("Altoparlanti MacBook Air");
 s.reboot;
