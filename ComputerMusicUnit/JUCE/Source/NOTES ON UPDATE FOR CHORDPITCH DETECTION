@@ -1,3 +1,5 @@
 1) Creation of a new file Chordpitchdetection.h 
 
-2) Modification on MainComponent.h with respect to Damiano have been annotated with "
+2) Modifications on MainComponent.h with respect to Damiano have been annotated with "MODIFICA" before each change
+
+3) Modifications on MainComponent.cpp with Respect to Damiano have been annotated with "ADDED","
