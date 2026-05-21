@@ -1,177 +1,225 @@
 (
-// 1. Configurazione Server
-s.options.numOutputBusChannels = 2; // Uscita verso le casse reali
-s.options.numInputBusChannels = 2;  // Ingresso dal cavo virtuale
-
+s.options.memSize = 65536;
+s.options.numOutputBusChannels = 2;
+s.options.numInputBusChannels = 2;
+// Inserisci qui i tuoi dispositivi audio virtuali corretti
 s.options.inDevice = "Windows WASAPI : VoiceMeeter Aux Output (VB-Audio VoiceMeeter AUX VAIO)";
 s.options.outDevice = "Windows WASAPI : Altoparlanti (Conexant SmartAudio HD)";
-
 s.boot;
-)
 
-(
-// 2. Variabili di Stato (AGGIORNATO con ~vocalPitch)
-~rootFreq = 440;       // Frequenza fondamentale dell'accordo
-~vocalPitch = 440;     // <-- MODIFICA: Memorizza l'ultimo pitch reale della voce per il PitchShift
-~complexity = 1;       // Da 1 a 5 (controllata da Joystick asse Y)
-~gain = 0.5;           // Volume (controllato da Joystick asse X)
-~sourceSelect = 1;     // IMPOSTATO A 1: abilita la ricezione da /guitarPitch
-~activeSynth = nil;    // Per gestire il nodo del sintetizzatore
-)
+s.waitForBoot({
+    "Inizializzazione Logica Diatonica e DSP...".postln;
 
-(
-// Libera eventuali ricevitori precedenti per evitare doppioni
-OSCdef.freeAll;
+    // --- VARIABILI DI STATO ---
+    ~rootFreq = 440;
+    ~vocalPitch = 440;
+    ~complexity = 2;         
+    ~tonicMidi = 60;         
+    ~scaleMode = 0;     
+    ~sourceSelect = 1;
+    ~gain = 0.5;
 
-// Crea un ascoltatore solo per la voce
-OSCdef(\testVoce, { |msg|
-    var pitch = msg[1];
-    ("VOCE QUANTIZZATA RICEVUTA: " ++ pitch.round(0.01) ++ " Hz").postln;
-}, '/vocalPitch');
-
-// Crea un ascoltatore per la chitarra (per confronto)
-OSCdef(\testChitarra, { |msg|
-    var pitch = msg[1];
-    ("CHITARRA RICEVUTA: " ++ pitch.round(0.01) ++ " Hz").postln;
-}, '/guitarPitch');
-
-"In ascolto su OSC...".postln;
-)
-
-
-(
-SynthDef(\trueHarmonizer, {
-    arg vocalPitch = 440, freqs = #[440, 554, 659, 0, 0, 0], amp = 0.5, gate = 1, vocalIn = 0, mix = 0.5;
-
-    var dryVoice, harmonies, pitchRatios, safeVocalPitch, sigHarmonies, finalSig;
-
-    // Ingresso microfono reale (Mono)
-    dryVoice = SoundIn.ar(vocalIn);
-
-    safeVocalPitch = vocalPitch.max(70);
-    pitchRatios = freqs / safeVocalPitch;
-
-    // Creazione delle voci armonizzate
-    harmonies = pitchRatios.collect({ |ratio, i|
-        var shifted;
-        
-        shifted = PitchShift.ar(
-            in: dryVoice,
-            windowSize: 0.03, 
-            pitchRatio: ratio,
-            pitchDispersion: 0.0, 
-            timeDispersion: 0.005 
-        );
-
-        // Applichiamo un Filtro Passa-Basso per ammorbidire l'effetto "Chipmunk" sulle armonie
-        shifted = LPF.ar(shifted, 4500);
-
-        shifted * (freqs[i] > 0);
-    });
-
-    // SPAZIALIZZAZIONE: invece di .sum, Splay distribuisce le armonie in stereo
-    sigHarmonies = Splay.ar(harmonies);
-    
-    // Crossfade: la dryVoice deve essere "sdoppiata" in stereo per il mix
-    finalSig = XFade2.ar(dryVoice ! 2, sigHarmonies, mix * 2 - 1);
-    
-    // RIVERBERO: Aggiunge profondità e amalgama voce e armonie
-    finalSig = FreeVerb.ar(finalSig, mix: 0.25, room: 0.6, damp: 0.5);
-
-    // Inviluppo generale e uscita
-    finalSig = finalSig * amp * EnvGen.kr(Env.asr(0.05, 1, 0.1), gate, doneAction: 2);
-    
-    Out.ar(0, finalSig); // Niente Pan2 qui, finalSig è già stereo grazie a Splay
-}).add;
-)
-
-
-(
-// Funzione per calcolare le note dell'accordo in base alla complessità
-~getChordFreqs = { |root, complexity|
-    var semitones;
-    semitones = switch (complexity.asInteger,
-        1, { [0, 7] },             // Quinta (Power chord)
-        2, { [0, 4, 7] },          // Triade Maggiore
-        3, { [0, 4, 7, 11] },       // Maj7
-        4, { [0, 4, 7, 11, 14] },   // Maj9
-        5, { [0, 4, 7, 11, 14, 17] },// 13th (Complessità massima)
-        { [0, 7] }
-    );
-    (root.cpsmidi + semitones).midicps.extend(6, 0); // Converte in Hz e riempie l'array a 6
-};
-
-// --- RICEVITORI OSC AGGIORNATI ---
-
-// 1. Pitch dalla Voce (da JUCE)
-OSCFunc({ |msg|
-    ~vocalPitch = msg[1]; // <-- MODIFICA: Salva SEMPRE l'intonazione vocale per aggiornare il Pitch Shifter
-
-    if(~sourceSelect == 0) {
-        // Se la voce guida l'armonia, aggiorna anche la rootFreq
-        ~rootFreq = msg[1]; 
-        if(~activeSynth.notNil) {
-            ~activeSynth.set(\vocalPitch, ~vocalPitch, \freqs, ~getChordFreqs.(~rootFreq, ~complexity));
-        }
-    } {
-        // Se la chitarra guida l'armonia, aggiorna comunque il vocalPitch dentro al Synth attivo!
-        if(~activeSynth.notNil) {
-            ~activeSynth.set(\vocalPitch, ~vocalPitch);
-        }
+    // --- STRUTTURE DATI ARMONICHE (INTATTE) ---
+    ~getScale = { arg mode = 0;
+        if(mode.asInteger == 1, { [0, 2, 3, 5, 7, 8, 10] }, { [0, 2, 4, 5, 7, 9, 11] })
     };
-}, '/vocalPitch');
 
-// 2. Pitch dalla Chitarra (da JUCE)
-OSCFunc({ |msg|
-    if(~sourceSelect == 1) {
-        ~rootFreq = msg[1]; // La chitarra detta l'accordo
-        if(~activeSynth.notNil) {
-            ~activeSynth.set(\freqs, ~getChordFreqs.(~rootFreq, ~complexity));
+    ~getNearestScaleNote = { arg midiNote, tonic, mode;
+        var scale = ~getScale.value(mode);
+        var inputMidi = midiNote.round.asInteger;
+        var baseOctave = ((inputMidi - tonic) / 12).floor.asInteger;
+        var bestDist = 1000, nearestMidi = inputMidi, nearestDegree = 0, nearestOctave = baseOctave;
+        
+        [-1, 0, 1].do({ arg octCorr;
+            scale.do({ arg semitone, degIdx;
+                var candOctave = baseOctave + octCorr;
+                var candMidi = tonic + (12 * candOctave) + semitone;
+                var candDist = (candMidi - inputMidi).abs;
+                if(candDist < bestDist, {
+                    bestDist = candDist;
+                    nearestMidi = candMidi; nearestDegree = degIdx; nearestOctave = candOctave;
+                });
+            });
+        });
+        [nearestMidi, nearestDegree, nearestOctave]
+    };
+
+    ~getDiatonicMidiNote = { arg tonic, mode, degree, octave;
+        var scale = ~getScale.value(mode);
+        var scaleSize = scale.size;
+        var octCorr = (degree / scaleSize).floor.asInteger;
+        var wrappedDegree = degree % scaleSize;
+        (tonic + (12 * (octave + octCorr)) + scale.at(wrappedDegree))
+    };
+
+    ~getChordFreqs = { arg root, complexity, tonic, mode, vocalPitch;
+        var rootMidi = root.max(20).cpsmidi.round.asInteger;
+        var noteInfo = ~getNearestScaleNote.value(rootMidi, tonic, mode);
+        var rMidi = noteInfo[0], rDegree = noteInfo[1], rOctave = noteInfo[2];
+        var vocalMidi = vocalPitch.max(20).cpsmidi;
+        var chordMidi;
+        
+        var degreeSteps = switch(complexity.asInteger.clip(1, 4),
+            1, { [0, 4] },             
+            2, { [0, 2, 4] },          
+            3, { [0, 2, 4, 6] }, 
+            4, { [0, 2, 4, 6, 8] }     
+        );
+        
+        chordMidi = degreeSteps.collect({ arg step;
+            ~getDiatonicMidiNote.value(tonic, mode, rDegree + step, rOctave)
+        });
+        
+        chordMidi = chordMidi.collect({ arg targetNote;
+            var octaves = [-2, -1, 0, 1, 2];
+            var bestNote = targetNote;
+            var minDistance = 1000;
+
+            octaves.do({ arg oct;
+                var candidate = targetNote + (oct * 12);
+                var distance = (candidate - vocalMidi).abs;
+                if(distance < minDistance) {
+                    minDistance = distance;
+                    bestNote = candidate;
+                };
+            });
+            bestNote
+        });
+        chordMidi.midicps.extend(6, 0)
+    };
+
+    // --- SYNTHDEF MODIFICATA: SOURCE-FILTER MODEL ALTA RISOLUZIONE ---
+    SynthDef(\trueHarmonizer, {
+        arg vocalPitch = 440, freqs = #[440, 554, 659, 0, 0, 0], amp = 0.5, gate = 1, vocalIn = 0, mix = 1.0;
+
+        var dryVoice, smoothFreqs;
+        var carrier, breath, harmonies, sigHarmonies, finalSig;
+        var numBands = 48; // Portiamo a 48 bande per una scansione precisissima delle formanti vocali
+        var bandFreqs;
+
+        dryVoice = SoundIn.ar(vocalIn);
+
+        // 1. SMOOTHING
+        smoothFreqs = Lag.kr(freqs.max(1), 0.05);
+
+        // --- INIZIO: SOURCE-FILTER MODEL ---
+
+        // 2. LA SORGENTE (Il "Pitch" puro per l'accordo)
+        // Blip genera un impulso limitato in banda, che matematicamente è la forma d'onda più simile 
+        // alla vibrazione della glottide umana (ricchissima di armoniche).
+        carrier = smoothFreqs.collect({ |f, i|
+            var voiceSource = Blip.ar(f.max(50), 20000 / f.max(50));
+            voiceSource * (f > 0); // Disattiva se lo slot dell'array frequenze è vuoto (0)
+        }).sum;
+
+        // Recuperiamo il "rumore" ad alta frequenza dalla voce originale (essenziale per "S", "F", "T").
+        // Lo estraiamo con un filtro passa-alto e lo applichiamo a del PinkNoise.
+        breath = PinkNoise.ar(0.3) * Amplitude.ar(HPF.ar(dryVoice, 3000), 0.005, 0.05);
+        carrier = carrier + breath;
+
+        // 3. IL FILTRO (Le "Formanti" della tua voce)
+        // Creiamo una scala esponenziale di 48 frequenze da 80 Hz a 12000 Hz
+        bandFreqs = (1..numBands).collect({ |i| i.linexp(1, numBands, 80, 12000) });
+
+        harmonies = bandFreqs.collect({ |f|
+            var modBand, carBand, env;
+
+            // Analizziamo quanta energia c'è in questa specifica banda nella TUA voce
+            modBand = BPF.ar(dryVoice, f, 0.15); // rq 0.15 definisce maglie molto strette per isolare la formante
+            
+            // Lavoriamo ad audio-rate (.ar) sull'Amplitude follower per non avere latenza di controllo sui transienti
+            env = Amplitude.ar(modBand, 0.005, 0.05);
+
+            // Imprimiamo quello stesso inviluppo sulla corrispettiva banda della sorgente sintetica
+            carBand = BPF.ar(carrier, f, 0.15);
+            carBand * env;
+        }).sum;
+
+        // Compensazione per la perdita di inserzione data dai filtri passabanda
+        harmonies = harmonies * 15.0;
+
+        // --- FINE: SOURCE-FILTER MODEL ---
+
+        // 4. EFFETTI E SPAZIALIZZAZIONE
+        // Allarghiamo l'immagine dell'armonia ai lati tramite effetto Haas
+        sigHarmonies = DelayN.ar(harmonies, 0.1, [0.02, 0.035]);
+
+        sigHarmonies = FreeVerb.ar(sigHarmonies, mix: 0.4, room: 0.7, damp: 0.5);
+        sigHarmonies = Limiter.ar(sigHarmonies * 3.0, 0.95, 0.01);
+
+        // 5. MIX FINALE
+        finalSig = dryVoice + (sigHarmonies * mix);
+        finalSig = finalSig * amp * EnvGen.kr(Env.asr(0.05, 1, 0.1), gate, doneAction: 2);
+
+        Out.ar(0, finalSig ! 2);
+    }).add;
+    s.sync;
+
+    // --- RICEVITORI OSC (INTATTI) ---
+    OSCdef.freeAll;
+    
+    OSCdef(\vocalPitch, { |msg|
+        ~vocalPitch = msg[1];
+        if(~sourceSelect == 0) {
+            ~rootFreq = msg[1];
+            if(~activeSynth.notNil) {
+                ~activeSynth.set(\vocalPitch, ~vocalPitch, \freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
+            }
+        } {
+            if(~activeSynth.notNil) { ~activeSynth.set(\vocalPitch, ~vocalPitch); }
+        };
+    }, '/vocalPitch');
+    
+    OSCdef(\guitarPitch, { |msg|
+        if(~sourceSelect == 1) {
+            ~rootFreq = msg[1];
+            if(~activeSynth.notNil) {
+                ~activeSynth.set(\freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
+            }
         }
-    }
-}, '/guitarPitch');
+    }, '/guitarPitch');
+    
+    OSCdef(\sourceSelect, { |msg| ~sourceSelect = msg[1]; }, '/sourceSelect');
 
-// 3. Selezione Sorgente (On/Off Chitarra)
-OSCFunc({ |msg|
-    ~sourceSelect = msg[1];
-    "Sorgente cambiata a: %".format(if(~sourceSelect==0, {"VOCE"}, {"CHITARRA"})).postln;
-}, '/sourceSelect');
+    OSCdef(\joystick, { |msg|
+        ~gain = msg[1].linlin(0, 1023, 0.0, 1.0).lag(0.1);
+        ~complexity = msg[2].linlin(0, 1023, 1, 4).round; 
+        if(~activeSynth.notNil) {
+            ~activeSynth.set(\amp, ~gain, \freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
+        }
+    }, '/joystick');
+    
+    OSCdef(\potenziometro, { |msg|
+        if(~activeSynth.notNil) { ~activeSynth.set(\mix, msg[1].linlin(0, 1023, 0.0, 1.0).lag(0.05)); }
+    }, '/potenziometro');
+    
+    OSCdef(\freeze, { |msg|
+        var isFrozen = msg[1].asInteger;
+        "Comando Freeze ricevuto: %".format(isFrozen).postln;
+    }, '/freeze');
+    
+    OSCdef(\tonic, { |msg|
+        ~tonicMidi = msg[1].asInteger;
+        "Nuova Tonica: %".format(~tonicMidi).postln;
+        if(~activeSynth.notNil) {
+            ~activeSynth.set(\freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
+        }
+    }, '/tonic');
+    
+    OSCdef(\mode, { |msg|
+        ~scaleMode = msg[1].asInteger;
+        "Nuovo Modo: %".format(~scaleMode).postln;
+        if(~activeSynth.notNil) {
+            ~activeSynth.set(\freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
+        }
+    }, '/mode');
+    
+    // --- AVVIO DEL SISTEMA ---
+    if(~activeSynth.notNil) { ~activeSynth.free };
+    ~activeSynth = Synth(\trueHarmonizer, [\freqs, ~getChordFreqs.value(440, ~complexity, ~tonicMidi, ~scaleMode, 440), \amp, 0.5]);
 
-// 4. Joystick (Arduino)
-OSCFunc({ |msg|
-    // asse X (msg[1]) -> Gain (mappato 0-1023 a 0.0-1.0)
-    ~gain = msg[1].linlin(0, 1023, 0.0, 1.0).lag(0.1);
-
-    // asse Y (msg[2]) -> Complessità (mappato 0-1023 a 1-5)
-    ~complexity = msg[2].linlin(0, 1023, 1, 5).round;
-
-    ~activeSynth.set(\amp, ~gain);
-    ~activeSynth.set(\freqs, ~getChordFreqs.(~rootFreq, ~complexity));
-}, '/joystick');
+    "=============================".postln;
+    "SISTEMA PRONTO E IN ASCOLTO".postln;
+    "=============================".postln;
+});
 )
-
-/*
-(
-// Inizia a suonare (AGGIORNATO con il nome del nuovo Synth \trueHarmonizer)
-~activeSynth = Synth(\trueHarmonizer, [\freqs, ~getChordFreqs.(440, 1), \amp, 0.5]);
-
-// Funzione di test ciclico
-Routine({
-    loop {
-        "Test: Cambio Nota e Complessità".postln;
-        ~rootFreq = [440, 329, 349, 392].choose; // Note casuali (La, Mi, Fa, Sol)
-        ~complexity = (1..5).choose;
-
-        ~activeSynth.set(\freqs, ~getChordFreqs.(~rootFreq, ~complexity));
-        ~activeSynth.set(\amp, 0.4);
-
-        2.wait;
-    }
-}).play;
-)
-*/
-
-// Per fermare tutto:
-// ~activeSynth.free;
-
-ServerOptions.devices.do({ |dev| dev.postln });
