@@ -167,21 +167,20 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                 // Focus on vocal range
                 if (detectedPitchVoice >= 70.0f && detectedPitchVoice <= 1000.0f)
                 {
-                    float perfectlyTunedPitch = snapToGrid(detectedPitchVoice);
-
-                    //Median filter to improve stability
                     pitchHistoryVoice.erase(pitchHistoryVoice.begin());
-                    pitchHistoryVoice.push_back(perfectlyTunedPitch);
+                    pitchHistoryVoice.push_back(detectedPitchVoice); // Salva il dato GREZZO continuo
 
                     std::copy(pitchHistoryVoice.begin(), pitchHistoryVoice.end(), sortedHistoryVoice.begin());
                     std::sort(sortedHistoryVoice.begin(), sortedHistoryVoice.end());
 
-					// Take the median value
+                    // Estrai la mediana dei valori continui
                     float medianPitch = sortedHistoryVoice[sortedHistoryVoice.size() / 2];
 
-                    uiPitchVoice.store(medianPitch, std::memory_order_relaxed);
+                    // Applica il grid-snapping solo sul dato stabile
+                    float perfectlyTunedPitch = snapToGrid(medianPitch);
 
-                    sendVocalPitchToSuperCollider(medianPitch);
+                    uiPitchVoice.store(perfectlyTunedPitch, std::memory_order_relaxed);
+                    sendVocalPitchToSuperCollider(perfectlyTunedPitch);
                 }
             }
             samplesSinceLastAnalysisVoice = 0;
@@ -408,25 +407,19 @@ float MainComponent::snapToGrid(float pitchHz)
 {
     if (pitchHz <= 0.0f) return 0.0f;
 
-    // MIDI Conversion
     float currentMidiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
 
-    // Apply Hysteresis
-    if (lastSnappedMidiVoice < 0.0f)
-    {
-		// First value: standard rounding
+    if (lastSnappedMidiVoice < 0.0f) {
         lastSnappedMidiVoice = std::round(currentMidiNote);
     }
-    else
-    {
-		//Require a significant deviation to snap to a new note
-        if (std::abs(currentMidiNote - lastSnappedMidiVoice) > 0.65f)
-        {
+    else {
+        // Richiedi che la voce sia almeno oltre l'80% verso la prossima nota
+        // per innescare il cambio. Questo uccide i trilli sui confini.
+        if (std::abs(currentMidiNote - lastSnappedMidiVoice) > 0.8f) {
             lastSnappedMidiVoice = std::round(currentMidiNote);
         }
     }
 
-    // Reconvert to hertz
     return 440.0f * std::pow(2.0f, (lastSnappedMidiVoice - 69.0f) / 12.0f);
 }
 
