@@ -5,7 +5,7 @@ s.options.numInputBusChannels = 2;
 
 // Forza l'uso dell'ASIO virtuale di VoiceMeeter
 s.options.device = "ASIO : Voicemeeter AUX Virtual ASIO"; // Verificare il nome esatto stampando ServerOptions.devices
-
+s.options.sampleRate = 44100;
 s.boot;
 
 s.waitForBoot({
@@ -19,6 +19,7 @@ s.waitForBoot({
     ~scaleMode = 0;          // 0 = Maggiore, 1 = Minore Naturale
     ~sourceSelect = 1;
     ~gain = 0.5;
+	~isFrozen = 0;
 
     // --- STRUTTURE DATI ARMONICHE ---
     ~getScale = { arg mode = 0;
@@ -101,20 +102,30 @@ s.waitForBoot({
         arg vocalPitch = 440, freqs = #[440, 554, 659, 0, 0, 0], amp = 0.5, gate = 1, vocalIn = 0, mix = 1.0;
 
         // DICHIARAZIONE VARIABILI: Tutte rigorosamente in cima
-        var dryVoice, harmonies, pitchRatios, safeVocalPitch, sigHarmonies, finalSig, smoothFreqs;
+        var dryVoice, harmonies, safeVocalPitch, sigHarmonies, finalSig, smoothFreqs;
+        var voiceGates, pitchRatios; // <-- Variabili aggiunte all'inizio
 
+        // Da qui in poi SOLO esecuzione e assegnazioni (nessun 'var')
         dryVoice = SoundIn.ar(vocalIn);
 
         // 1. SMOOTHING: Applichiamo il Lag ai segnali di controllo in ingresso
         safeVocalPitch = Lag.kr(vocalPitch.max(70), 0.05);
-        smoothFreqs = Lag.kr(freqs.max(1), 0.05); // Assegnazione senza "var"
+        smoothFreqs = Lag.kr(freqs.max(1), 0.05);
 
-        pitchRatios = smoothFreqs / safeVocalPitch;
+        // Crea un array di gate (0 o 1) basato sulle frequenze originali
+        voiceGates = Lag.kr(freqs > 0, 0.05);       // <-- 'var' rimosso
+        pitchRatios = smoothFreqs / safeVocalPitch; // <-- 'var' rimosso
 
         harmonies = pitchRatios.collect({ |ratio, i|
-            var shifted = PitchShift.ar(dryVoice, 0.1, ratio, 0.0, 0.005);
-            shifted = LPF.ar(shifted, 4500); // Taglia le frequenze metalliche del pitch shifter
-            shifted * (smoothFreqs[i] > 0);
+            // Nota: qui 'var' è ammesso perché ci troviamo all'inizio
+            // di una NUOVA funzione (la closure passata a .collect)
+            var safeRatio = Select.kr(freqs[i] > 0, [1.0, ratio]);
+
+            var shifted = PitchShift.ar(dryVoice, 0.1, safeRatio, 0.0, 0.005);
+            shifted = LPF.ar(shifted, 4500);
+
+            // Moltiplica per il gate (che vale 0 se la frequenza in ingresso era 0)
+            shifted * voiceGates[i];
         });
 
         // Creiamo un'immagine stereo spalmandola ai lati
@@ -129,78 +140,83 @@ s.waitForBoot({
         sigHarmonies = Limiter.ar(sigHarmonies * 3.0, 0.95, 0.01);
 
         // 2. MIX DRY/WET: La voce dry resta intatta, si aggiungono le armonie dosate dal mix
-        finalSig = dryVoice + (sigHarmonies * mix);
+        // Modifica le ultime righe del SynthDef in questo modo:
+		finalSig = dryVoice + (sigHarmonies * mix);
+		finalSig = finalSig * amp * EnvGen.kr(Env.asr(0.05, 1, 0.1), gate, doneAction: 2);
 
-        finalSig = finalSig * amp * EnvGen.kr(Env.asr(0.05, 1, 0.1), gate, doneAction: 2);
-
-        // Uscita forzata in stereo
-        Out.ar(0, finalSig ! 2);
+		// Limiter sul master prima dell'uscita
+		finalSig = Limiter.ar(finalSig, 0.98, 0.01);
+		Out.ar(0, finalSig);
     }).add;
     s.sync; // Attende il completamento della compilazione del Synth
 
-    // --- RICEVITORI OSC ---
+    // --- RICEVITORI OSC AGGIORNATI ---
     OSCdef.freeAll;
 
     // Pitch da JUCE (VOCE)
     OSCdef(\vocalPitch, { |msg|
         ~vocalPitch = msg[1];
 
-        // AGGIUNGI QUESTA RIGA PER IL DEBUG
-        "VOCE: % Hz".format(msg[1].round(0.01)).postln;
-
-        if(~sourceSelect == 0) {
-            ~rootFreq = msg[1];
-            if(~activeSynth.notNil) {
-                ~activeSynth.set(\vocalPitch, ~vocalPitch, \freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
-            }
-        } {
-            if(~activeSynth.notNil) {
+        if(~activeSynth.notNil) {
+            if(~isFrozen == 1) {
+                // MODO FREEZE: Non ricalcoliamo le frequenze dell'accordo.
+                // TUTTAVIA, continuiamo a inviare il vocalPitch al Synth!
+                // Questo permette al SynthDef di aggiornare i `pitchRatios` in tempo reale.
+                // Anche se il cantante si muove, le armonie in uscita resteranno perfettamente congelate.
+                ~activeSynth.set(\vocalPitch, ~vocalPitch);
+            } {
+                // MODO NORMALE
+                if(~sourceSelect == 0) {
+                    ~rootFreq = msg[1];
+                };
                 ~activeSynth.set(
                     \vocalPitch, ~vocalPitch,
                     \freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch)
                 );
-            }
+            };
         };
     }, '/vocalPitch');
 
     // Pitch da JUCE (CHITARRA)
     OSCdef(\guitarPitch, { |msg|
-
-        // AGGIUNGI QUESTA RIGA PER IL DEBUG
-        "CHITARRA: % Hz".format(msg[1].round(0.01)).postln;
-
         if(~sourceSelect == 1) {
-            ~rootFreq = msg[1];
-            if(~activeSynth.notNil) {
-                ~activeSynth.set(\freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
+            // MODO NORMALE: La chitarra detta l'armonia SOLO se NON siamo in Freeze
+            if(~isFrozen == 0) {
+                ~rootFreq = msg[1];
+                if(~activeSynth.notNil) {
+                    ~activeSynth.set(\freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
+                }
             }
         }
     }, '/guitarPitch');
 
-    OSCdef(\sourceSelect, { |msg| ~sourceSelect = msg[1]; }, '/sourceSelect');
-
-    // Hardware: Joystick da Arduino
-    OSCdef(\joystick, { |msg|
-        ~gain = msg[1].linlin(0, 1023, 0.0, 1.0).lag(0.1);
-        ~complexity = msg[2].linlin(0, 1023, 1, 4).round; // Scalato per i 4 livelli (Power -> Nona)
-        if(~activeSynth.notNil) {
-            ~activeSynth.set(\amp, ~gain, \freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
-        }
-    }, '/joystick');
-
-    // Hardware: Potenziometro da Arduino
-    OSCdef(\potenziometro, { |msg|
-        if(~activeSynth.notNil) { ~activeSynth.set(\mix, msg[1].linlin(0, 1023, 0.0, 1.0).lag(0.05)); }
-    }, '/potenziometro');
-
-    // Hardware: Footswitch da Arduino
+    // Sensori da Processing: Freeze (0 o 1)
     OSCdef(\freeze, { |msg|
-        var isFrozen = msg[1].asInteger;
-        "Comando Freeze ricevuto: %".format(isFrozen).postln;
-        // La logica del freeze andrà agganciata qui
+        ~isFrozen = msg[1].asInteger;
+        "Stato Freeze: %".format(~isFrozen).postln;
     }, '/freeze');
 
-    // GUI: Imposta la nota fondamentale da Processing
+    OSCdef(\sourceSelect, { |msg| ~sourceSelect = msg[1]; }, '/sourceSelect');
+
+    // Sensori da Processing: Complessità (1-4)
+    OSCdef(\complexity, { |msg|
+        ~complexity = msg[1].asInteger;
+        "Nuova Complessità: %".format(~complexity).postln; // <-- Aggiunto per il debug
+        if(~activeSynth.notNil) {
+            ~activeSynth.set(\freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
+        }
+    }, '/complexity');
+
+    // Sensori da Processing: Mix (0.0 - 1.0)
+    OSCdef(\mix, { |msg|
+        var valMix = msg[1].asFloat;
+        "Nuovo Mix: %".format(valMix.round(0.01)).postln; // <-- Aggiunto per il debug
+        if(~activeSynth.notNil) {
+            ~activeSynth.set(\mix, valMix.lag(0.05));
+        }
+    }, '/mix');
+
+    // GUI: Imposta la nota fondamentale (Int MIDI)
     OSCdef(\tonic, { |msg|
         ~tonicMidi = msg[1].asInteger;
         "Nuova Tonica: %".format(~tonicMidi).postln;
@@ -209,7 +225,7 @@ s.waitForBoot({
         }
     }, '/tonic');
 
-    // GUI: Imposta il modo da Processing (es. 0 = Maggiore, 1 = Minore)
+    // GUI: Imposta il modo (0 = Magg, 1 = Min)
     OSCdef(\mode, { |msg|
         ~scaleMode = msg[1].asInteger;
         "Nuovo Modo: %".format(~scaleMode).postln;

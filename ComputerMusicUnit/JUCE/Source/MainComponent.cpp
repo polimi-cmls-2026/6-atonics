@@ -9,10 +9,10 @@ MainComponent::MainComponent()
 {
     setSize(800, 600);
 
-    // 1. Forza JUCE a preferire ASIO (aggirando così il crash di WASAPI su Windows)
+    // Force ASIO drivers
     deviceManager.setCurrentAudioDeviceType("ASIO", true);
 
-    // 2. Chiamata standard protetta (ora userà ASIO di default)
+    // 2. Protected standard call (ASIO)
     if (juce::RuntimePermissions::isRequired(juce::RuntimePermissions::recordAudio)
         && !juce::RuntimePermissions::isGranted(juce::RuntimePermissions::recordAudio))
     {
@@ -24,7 +24,7 @@ MainComponent::MainComponent()
         setAudioChannels(2, 2);
     }
 
-    // 3. Configurazione del pulsante per aprire il pannello Audio
+    // 3. Button to open audio settings
     settingsButton.setButtonText("Impostazioni Audio...");
     settingsButton.onClick = [this]
         {
@@ -37,7 +37,7 @@ MainComponent::MainComponent()
     addAndMakeVisible(settingsButton);
 
     pitchDebugLabel.setText("Pitch: -- Hz", juce::dontSendNotification);
-    pitchDebugLabel.setFont(juce::Font(24.0f, juce::Font::bold)); // Font grande e leggibile
+    pitchDebugLabel.setFont(juce::Font(24.0f, juce::Font::bold));
     addAndMakeVisible(pitchDebugLabel);
 
     envDebugLabel.setText("Env: --", juce::dontSendNotification);
@@ -62,7 +62,6 @@ MainComponent::~MainComponent()
 
 void MainComponent::timerCallback()
 {
-    // Leggiamo i valori in modo sicuro
     float currentVoice = uiPitchVoice.load(std::memory_order_relaxed);
     float currentGuitar = uiPitchGuitar.load(std::memory_order_relaxed);
 
@@ -85,29 +84,33 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     writeIndex = 0;
     samplesSinceLastAnalysis = 0;
 
-    // Inizializzazione Buffer Voce
+    chordDetector = ChordPitchDetector(2048, 8192, sampleRate);
+
+    chordDetector.rmsThreshold = 0.005f;
+    chordDetector.minFreqHz = 80.0f;
+
+	// Initialize voice processing buffers
     circularBufferVoice.assign(windowSize, 0.0f);
     writeIndexVoice = 0;
     samplesSinceLastAnalysisVoice = 0;
 
-    // Inizializza lo storico con 5 valori a zero
+	// Initialize pitch history for median filtering (5 zeros)
     pitchHistoryVoice.assign(5, 0.0f);
+    pitchHistoryGuitar.assign(5, 0.0f);
 
-    pitchHistoryGuitar.assign(5, 0.0f); // Inizializza lo storico
-
-    // --- PRE-ALLOCAZIONE DEI VETTORI DI SUPPORTO ---
+    // Support vectors pre-allocation
     frameVoice.assign(windowSize, 0.0f);
-    sortedHistoryVoice.assign(5, 0.0f); // Corrisponde alla dimensione di pitchHistoryVoice
+    sortedHistoryVoice.assign(5, 0.0f);
 
     frameGuitar.assign(windowSize, 0.0f);
-    sortedHistoryGuitar.assign(5, 0.0f); // Corrisponde alla dimensione di pitchHistoryGuitar
+    sortedHistoryGuitar.assign(5, 0.0f);
 
     lpfAlpha = 1.0f - std::exp(-2.0f * M_PI * lpfCutoffHz / currentSampleRate);
 
     // Pre-calculate DSP coefficients
     gateAttackCoeff = std::exp(-1.0f / (gateAttack * sampleRate));
 
-    // Calcolo separato dei coefficienti
+	// Separated coefficients for guitar and voice release
     gateReleaseCoeffGuitar = std::exp(-1.0f / (gateReleaseGuitar * sampleRate));
     gateReleaseCoeffVoice = std::exp(-1.0f / (gateReleaseVoice * sampleRate));
 
@@ -139,12 +142,12 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         voiceProcessed = applyCompressor(voiceProcessed, compEnvVoice);
         applyEnvelopeFollower(voiceProcessed, envVoice);
 
-        // Scrittura nel buffer circolare della Voce
+		// Circular buffer writing for voice
         circularBufferVoice[writeIndexVoice] = voiceProcessed;
         writeIndexVoice = (writeIndexVoice + 1) % windowSize;
         samplesSinceLastAnalysisVoice++;
 
-        // Analisi YIN per la Voce
+        // YIN vocal analysis
         if (samplesSinceLastAnalysisVoice >= hopSize)
         {
             float energyVoice = 0.0f;
@@ -161,22 +164,20 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
             {
                 detectedPitchVoice = detectPitchYIN(frameVoice.data(), windowSize, currentSampleRate);
 
-                // Range vocale umano (circa 70 Hz - 1000 Hz)
+                // Focus on vocal range
                 if (detectedPitchVoice >= 70.0f && detectedPitchVoice <= 1000.0f)
                 {
                     float perfectlyTunedPitch = snapToGrid(detectedPitchVoice);
 
-                    // --- INIZIO FILTRO MEDIANO ---
-                    // Rimuovi il valore più vecchio e aggiungi il nuovo
+                    //Median filter to improve stability
                     pitchHistoryVoice.erase(pitchHistoryVoice.begin());
                     pitchHistoryVoice.push_back(perfectlyTunedPitch);
 
                     std::copy(pitchHistoryVoice.begin(), pitchHistoryVoice.end(), sortedHistoryVoice.begin());
                     std::sort(sortedHistoryVoice.begin(), sortedHistoryVoice.end());
 
-                    // Prendi il valore centrale (il mediano)
+					// Take the median value
                     float medianPitch = sortedHistoryVoice[sortedHistoryVoice.size() / 2];
-                    // --- FINE FILTRO MEDIANO ---
 
                     uiPitchVoice.store(medianPitch, std::memory_order_relaxed);
 
@@ -191,54 +192,45 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         guitarProcessed = applyCompressor(guitarProcessed, compEnvGuitar);
         applyEnvelopeFollower(guitarProcessed, envGuitar);
 
-        // Applichiamo il filtro passa-basso (LPF) SOLO per il buffer di analisi
-        lpfState = lpfAlpha * guitarProcessed + (1.0f - lpfAlpha) * lpfState;
-        circularBuffer[writeIndex] = lpfState;
+        circularBuffer[writeIndex] = guitarProcessed;
 
         writeIndex = (writeIndex + 1) % windowSize;
         samplesSinceLastAnalysis++;
 
         if (samplesSinceLastAnalysis >= hopSize)
         {
-            
-            float energy = 0.0f;
-
             for (int j = 0; j < windowSize; ++j)
             {
                 frameGuitar[j] = circularBuffer[(writeIndex + j) % windowSize];
-                energy += frameGuitar[j] * frameGuitar[j];
             }
 
-            // Calcolo dell'RMS (Root Mean Square) per misurare l'energia reale del blocco
-            float rms = std::sqrt(energy / windowSize);
+            // CHORD PITCH DETECTION (HPS + WEIGHTING)
+            float chordRoot = chordDetector.detectChordRoot(frameGuitar.data(), windowSize);
 
-            // Esegui YIN solo se il segnale processato ha abbastanza energia
-            if (rms > 0.005f)
+            // Focus on guitar range
+            if (chordRoot >= 80.0f && chordRoot <= 800.0f)
             {
-                detectedPitch = detectPitchYIN(frameGuitar.data(), windowSize, currentSampleRate);
+                // 1. Quantizzazione alla nota più vicina con isteresi
+                float perfectlyTunedGuitar = snapToGridGuitar(chordRoot);
 
-                // Applichiamo i limiti: tra 60 Hz e 800 Hz
-                if (detectedPitch >= 60.0f && detectedPitch <= 800.0f)
-                {
-                    // --- INIZIO FILTRO MEDIANO CHITARRA ---
-                    pitchHistoryGuitar.erase(pitchHistoryGuitar.begin());
-                    pitchHistoryGuitar.push_back(detectedPitch);
+                // 2. Filtro Mediano a 5 frame per uccidere i glitch improvvisi (es. ottave errate)
+                pitchHistoryGuitar.erase(pitchHistoryGuitar.begin());
+                pitchHistoryGuitar.push_back(perfectlyTunedGuitar);
 
-                    std::copy(pitchHistoryGuitar.begin(), pitchHistoryGuitar.end(), sortedHistoryGuitar.begin());
-                    std::sort(sortedHistoryGuitar.begin(), sortedHistoryGuitar.end());
-                    float medianGuitarPitch = sortedHistoryGuitar[sortedHistoryGuitar.size() / 2];
-                    // --- FINE FILTRO MEDIANO CHITARRA ---
+                std::copy(pitchHistoryGuitar.begin(), pitchHistoryGuitar.end(), sortedHistoryGuitar.begin());
+                std::sort(sortedHistoryGuitar.begin(), sortedHistoryGuitar.end());
 
-                    uiPitchGuitar.store(medianGuitarPitch, std::memory_order_relaxed);
+                float medianPitchGuitar = sortedHistoryGuitar[sortedHistoryGuitar.size() / 2];
 
-                    sendPitchToSuperCollider(medianGuitarPitch);
-                }
+                // 3. Output
+                uiPitchGuitar.store(medianPitchGuitar, std::memory_order_relaxed);
+                sendPitchToSuperCollider(medianPitchGuitar);
             }
 
             samplesSinceLastAnalysis = 0;
         }
 
-        // Temporary bypass for audio testing
+        // Output
         leftOut[i] = voiceProcessed;
         rightOut[i] = guitarProcessed;
     }
@@ -254,8 +246,6 @@ void MainComponent::paint(juce::Graphics& g)
 void MainComponent::resized() 
 {
     settingsButton.setBounds(10, 10, 160, 30);
-
-    // Posizioniamo le label sotto il pulsante delle impostazioni
     pitchDebugLabel.setBounds(10, 60, 300, 40);
     envDebugLabel.setBounds(10, 100, 300, 30);
 }
@@ -418,33 +408,56 @@ float MainComponent::snapToGrid(float pitchHz)
 {
     if (pitchHz <= 0.0f) return 0.0f;
 
-    // 1. Converti in nota MIDI continua
+    // MIDI Conversion
     float currentMidiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
 
-    // 2. Applica l'isteresi
+    // Apply Hysteresis
     if (lastSnappedMidiVoice < 0.0f)
     {
-        // Primo ingresso in assoluto: arrotondamento standard (0.5)
+		// First value: standard rounding
         lastSnappedMidiVoice = std::round(currentMidiNote);
     }
     else
     {
-        // Se siamo già ancorati a una nota, richiediamo uno scostamento di > 0.65 
-        // per autorizzare il cambio di semitono.
+		//Require a significant deviation to snap to a new note
         if (std::abs(currentMidiNote - lastSnappedMidiVoice) > 0.65f)
         {
             lastSnappedMidiVoice = std::round(currentMidiNote);
         }
     }
 
-    // 3. Riconverti il MIDI ancorato in Hertz
+    // Reconvert to hertz
     return 440.0f * std::pow(2.0f, (lastSnappedMidiVoice - 69.0f) / 12.0f);
+}
+
+float MainComponent::snapToGridGuitar(float pitchHz)
+{
+    if (pitchHz <= 0.0f) return 0.0f;
+
+    // Conversione MIDI
+    float currentMidiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
+
+    // Applica Isteresi (tolleranza maggiore per stabilizzare l'HPS)
+    if (lastSnappedMidiGuitar < 0.0f)
+    {
+        lastSnappedMidiGuitar = std::round(currentMidiNote);
+    }
+    else
+    {
+        // Richiediamo una variazione di 0.7 semitoni per cambiare nota
+        if (std::abs(currentMidiNote - lastSnappedMidiGuitar) > 0.7f)
+        {
+            lastSnappedMidiGuitar = std::round(currentMidiNote);
+        }
+    }
+
+    // Riconversione in Hertz perfettamente intonati
+    return 440.0f * std::pow(2.0f, (lastSnappedMidiGuitar - 69.0f) / 12.0f);
 }
 
 void MainComponent::sendVocalPitchToSuperCollider(float pitchInHz)
 {
-    // La voce passa già per snapToGrid e filtro mediano. 
-    // Se il valore è praticamente identico all'ultimo inviato, non fare nulla.
+	// If value is close to the last sent pitch, ignore it to prevent micro-fluctuations
     if (std::abs(pitchInHz - lastSentVoicePitch) < 0.1f)
         return;
 
@@ -464,12 +477,12 @@ void MainComponent::sendVocalPitchToSuperCollider(float pitchInHz)
 
 void MainComponent::sendPitchToSuperCollider(float pitchInHz)
 {
-    // La chitarra invia valori grezzi continui. Calcoliamo la distanza in centesimi.
+	// Compute difference between consecutive pitch values in cents
     if (lastSentGuitarPitch > 0.0f && pitchInHz > 0.0f)
     {
         float centsDiff = 1200.0f * std::abs(std::log2(pitchInHz / lastSentGuitarPitch));
 
-        // Se la variazione è minore della tolleranza, ignora il micro-scostamento
+        // If variation is too small, ignore it
         if (centsDiff < deadbandCents)
             return;
     }
