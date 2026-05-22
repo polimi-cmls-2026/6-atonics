@@ -7,6 +7,7 @@
 #include <vector>
 #include <array>
 #include <atomic>
+#include "Chordpitchdetector.h"
 
 //==============================================================================
 class MainComponent : public juce::AudioAppComponent,
@@ -29,7 +30,6 @@ public:
 
 private:
     // --- DSP Functions ---
-    // Aggiungi il terzo parametro per il Gain
     float applyGate(float inputSample, float& envelope, float& gainState, float releaseCoeff);
     float applyCompressor(float inputSample, float& envelope);
     float applyEnvelopeFollower(float inputSample, float& envelope);
@@ -42,11 +42,11 @@ private:
     std::vector<float> circularBuffer;
     int writeIndex = 0;
     int windowSize = 2048;
-    int hopSize = 512;
+    int hopSize = 1024;
     int samplesSinceLastAnalysis = 0;
     double currentSampleRate = 44100.0;
 
-    // VETTORI PRE-ALLOCATI PER L'ANALISI DELLA CHITARRA
+	// Pre-allocated vectors for guitar analysis
     std::vector<float> frameGuitar;
     std::vector<float> sortedHistoryGuitar;
 
@@ -56,23 +56,24 @@ private:
     int samplesSinceLastAnalysisVoice = 0;
     float detectedPitchVoice = 0.0f;
 
-    // VETTORI PRE-ALLOCATI PER L'ANALISI DELLA VOCE
+    // Pre-allocated vectors for vocal analysis
     std::vector<float> frameVoice;
     std::vector<float> sortedHistoryVoice;
 
-    // --- Variabile di stato per l'isteresi vocale ---
+    // Variable for hysteresis
     float lastSnappedMidiVoice = -1.0f;
+    float lastSnappedMidiGuitar = -1.0f;
 
-    // Nuova variabile per il filtro mediano
+	// Variable for median filtering
     std::vector<float> pitchHistoryVoice;
 
-    std::vector<float> pitchHistoryGuitar; // Sotto a pitchHistoryVoice
+    std::vector<float> pitchHistoryGuitar;
 
     std::atomic<float> uiPitchVoice{ 0.0f };
     std::atomic<float> uiPitchGuitar{ 0.0f };
 
-    // --- Nuove Funzioni ---
     float snapToGrid(float pitchHz);
+    float snapToGridGuitar(float pitchHz);
     void sendVocalPitchToSuperCollider(float pitchInHz);
 
     // --- Noise Gate ---
@@ -80,13 +81,13 @@ private:
     float gateAttack = 0.002f;
     float gateAttackCoeff = 0.0f;
 
-    // Parametri separati per il Release
+    // Separated release times
     float gateReleaseGuitar = 0.05f;
     float gateReleaseVoice = 0.2f;
     float gateReleaseCoeffGuitar = 0.0f;
     float gateReleaseCoeffVoice = 0.0f;
 
-    // Variabili di stato
+    // State variables
     float gateEnvGuitar = 0.0f;
     float gateEnvVoice = 0.0f;
     float gateGainGuitar = 0.0f;
@@ -95,11 +96,11 @@ private:
     // --- Deadband State ---
     float lastSentGuitarPitch = -1.0f;
     float lastSentVoicePitch = -1.0f;
-    float deadbandCents = 15.0f; // Soglia di tolleranza per la chitarra (15 centesimi)
+    float deadbandCents = 30.0f; // Tolerance for guitar
 
-    // --- LPF per l'analisi della chitarra ---
+    // LPF for guitar analysus
     float lpfState = 0.0f;
-    float lpfCutoffHz = 350.0f; // Imposta comodamente gli Hertz qui
+	float lpfCutoffHz = 350.0f; // Set desired cutoff frequency
     float lpfAlpha = 0.0f;
 
     // --- Compressor ---
@@ -124,6 +125,9 @@ private:
     // --- Pitch Detection (YIN specific) ---
     float detectedPitch = 0.0f;
     float yinThreshold = 0.15f;
+
+	// HPS Pitch Detector for Chord Detection
+    ChordPitchDetector chordDetector{ 2048, 8192, 44100.0 };
 
     // --- OSC ---
     juce::OSCSender   oscSender;
