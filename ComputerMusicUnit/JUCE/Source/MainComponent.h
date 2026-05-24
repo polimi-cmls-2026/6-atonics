@@ -76,6 +76,8 @@ private:
     float snapToGridGuitar(float pitchHz);
     void sendVocalPitchToSuperCollider(float pitchInHz);
 
+    float smoothedMidiVoice = -1.0f;
+
     // --- Noise Gate ---
     float gateThreshold = 0.01f;
     float gateAttack = 0.002f;

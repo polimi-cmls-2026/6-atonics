@@ -98,6 +98,8 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     pitchHistoryVoice.assign(5, 0.0f);
     pitchHistoryGuitar.assign(5, 0.0f);
 
+    smoothedMidiVoice = -1.0f;
+
     // Support vectors pre-allocation
     frameVoice.assign(windowSize, 0.0f);
     sortedHistoryVoice.assign(5, 0.0f);
@@ -173,11 +175,26 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                     std::copy(pitchHistoryVoice.begin(), pitchHistoryVoice.end(), sortedHistoryVoice.begin());
                     std::sort(sortedHistoryVoice.begin(), sortedHistoryVoice.end());
 
-                    // Estrai la mediana dei valori continui
-                    float medianPitch = sortedHistoryVoice[sortedHistoryVoice.size() / 2];
+                    // Estrai la mediana dei valori continui (Hz)
+                    float medianPitchHz = sortedHistoryVoice[sortedHistoryVoice.size() / 2];
 
-                    // Applica il grid-snapping solo sul dato stabile
-                    float perfectlyTunedPitch = snapToGrid(medianPitch);
+                    // Converti in MIDI continuo per uno smoothing lineare rispetto alla percezione
+                    float currentMidi = 69.0f + 12.0f * std::log2(medianPitchHz / 440.0f);
+
+                    // Filtro EMA (Exponential Moving Average)
+                    // Valori ottimali per alpha: tra 0.15f (molto stabile) e 0.4f (più reattivo)
+                    float alpha = 0.25f;
+
+                    if (smoothedMidiVoice < 0.0f) {
+                        smoothedMidiVoice = currentMidi; // Inizializzazione al primo avvio
+                    }
+                    else {
+                        smoothedMidiVoice = alpha * currentMidi + (1.0f - alpha) * smoothedMidiVoice;
+                    }
+
+                    // Riconverti in Hz il dato ripulito e passalo al quantizzatore
+                    float smoothedHz = 440.0f * std::pow(2.0f, (smoothedMidiVoice - 69.0f) / 12.0f);
+                    float perfectlyTunedPitch = snapToGrid(smoothedHz);
 
                     uiPitchVoice.store(perfectlyTunedPitch, std::memory_order_relaxed);
                     sendVocalPitchToSuperCollider(perfectlyTunedPitch);
