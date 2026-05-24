@@ -62,12 +62,47 @@ MainComponent::~MainComponent()
 
 void MainComponent::timerCallback()
 {
+    // 1. Lettura thread-safe dei valori calcolati dal DSP
     float currentVoice = uiPitchVoice.load(std::memory_order_relaxed);
     float currentGuitar = uiPitchGuitar.load(std::memory_order_relaxed);
 
+    // 2. Invio Inviluppi (già lo facevi)
     oscSender.send("/envelope/guitar", envGuitar);
     oscSender.send("/envelope/voice", envVoice);
 
+    // 3. Logica di invio OSC Voce (Spostata qui dal thread audio)
+    if (currentVoice > 0.0f && std::abs(currentVoice - lastSentVoicePitch) >= 0.1f)
+    {
+        juce::OSCMessage msgVoice("/vocalPitch");
+        msgVoice.addFloat32(currentVoice);
+        if (oscSender.send(msgVoice)) {
+            lastSentVoicePitch = currentVoice;
+        }
+    }
+
+    // 4. Logica di invio OSC Chitarra (Spostata qui, con deadband in cents)
+    if (lastSentGuitarPitch > 0.0f && currentGuitar > 0.0f)
+    {
+        float centsDiff = 1200.0f * std::abs(std::log2(currentGuitar / lastSentGuitarPitch));
+        if (centsDiff >= deadbandCents)
+        {
+            juce::OSCMessage msgGuitar("/guitarPitch");
+            msgGuitar.addFloat32(currentGuitar);
+            if (oscSender.send(msgGuitar)) {
+                lastSentGuitarPitch = currentGuitar;
+            }
+        }
+    }
+    else if (currentGuitar > 0.0f && lastSentGuitarPitch <= 0.0f) {
+        // Primo invio in assoluto
+        juce::OSCMessage msgGuitar("/guitarPitch");
+        msgGuitar.addFloat32(currentGuitar);
+        if (oscSender.send(msgGuitar)) {
+            lastSentGuitarPitch = currentGuitar;
+        }
+    }
+
+    // 5. Aggiornamento UI
     juce::String debugText = "Chitarra: " + juce::String(currentGuitar, 1) + " Hz\n" +
         "Voce: " + juce::String(currentVoice, 1) + " Hz";
 
@@ -153,7 +188,6 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         if (samplesSinceLastAnalysisVoice >= hopSize)
         {
             float energyVoice = 0.0f;
-
             for (int j = 0; j < windowSize; ++j)
             {
                 frameVoice[j] = circularBufferVoice[(writeIndexVoice + j) % windowSize];
@@ -170,36 +204,43 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                 if (detectedPitchVoice >= 70.0f && detectedPitchVoice <= 1000.0f)
                 {
                     pitchHistoryVoice.erase(pitchHistoryVoice.begin());
-                    pitchHistoryVoice.push_back(detectedPitchVoice); // Salva il dato GREZZO continuo
+                    pitchHistoryVoice.push_back(detectedPitchVoice);
 
                     std::copy(pitchHistoryVoice.begin(), pitchHistoryVoice.end(), sortedHistoryVoice.begin());
                     std::sort(sortedHistoryVoice.begin(), sortedHistoryVoice.end());
 
-                    // Estrai la mediana dei valori continui (Hz)
                     float medianPitchHz = sortedHistoryVoice[sortedHistoryVoice.size() / 2];
-
-                    // Converti in MIDI continuo per uno smoothing lineare rispetto alla percezione
                     float currentMidi = 69.0f + 12.0f * std::log2(medianPitchHz / 440.0f);
 
-                    // Filtro EMA (Exponential Moving Average)
-                    // Valori ottimali per alpha: tra 0.15f (molto stabile) e 0.4f (più reattivo)
-                    float alpha = 0.25f;
+                    // Riduciamo leggermente l'alpha (es. da 0.25 a 0.4) per renderlo più reattivo
+                    float alpha = 0.4f;
 
                     if (smoothedMidiVoice < 0.0f) {
-                        smoothedMidiVoice = currentMidi; // Inizializzazione al primo avvio
+                        smoothedMidiVoice = currentMidi; // Snap immediato al primo frame valido
                     }
                     else {
                         smoothedMidiVoice = alpha * currentMidi + (1.0f - alpha) * smoothedMidiVoice;
                     }
 
-                    // Riconverti in Hz il dato ripulito e passalo al quantizzatore
                     float smoothedHz = 440.0f * std::pow(2.0f, (smoothedMidiVoice - 69.0f) / 12.0f);
                     float perfectlyTunedPitch = snapToGrid(smoothedHz);
 
                     uiPitchVoice.store(perfectlyTunedPitch, std::memory_order_relaxed);
-                    sendVocalPitchToSuperCollider(perfectlyTunedPitch);
                 }
             }
+            else
+            {
+                // --- LA MODIFICA CRITICA: RESET DEI FILTRI NEL SILENZIO ---
+                // Se la voce scende sotto la soglia RMS, azzeriamo la memoria.
+                // Questo previene scivolamenti di pitch (portamento) tra una frase e l'altra.
+
+                smoothedMidiVoice = -1.0f;
+                lastSnappedMidiVoice = -1.0f;
+
+                // Riempiamo il filtro mediano con 0.0f per uccidere code residue
+                std::fill(pitchHistoryVoice.begin(), pitchHistoryVoice.end(), 0.0f);
+            }
+
             samplesSinceLastAnalysisVoice = 0;
         }
 
@@ -247,7 +288,6 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 
                 // 3. Output
                 uiPitchGuitar.store(medianPitchGuitar, std::memory_order_relaxed);
-                sendPitchToSuperCollider(medianPitchGuitar);
             }
 
             samplesSinceLastAnalysis = 0;
