@@ -76,6 +76,8 @@ private:
     float snapToGridGuitar(float pitchHz);
     void sendVocalPitchToSuperCollider(float pitchInHz);
 
+    float smoothedMidiVoice = -1.0f;
+
     // --- Noise Gate ---
     float gateThreshold = 0.01f;
     float gateAttack = 0.002f;
@@ -100,7 +102,7 @@ private:
 
     // LPF for guitar analysus
     float lpfState = 0.0f;
-	float lpfCutoffHz = 350.0f; // Set desired cutoff frequency
+	float lpfCutoffHz = 150.0f; // Set desired cutoff frequency
     float lpfAlpha = 0.0f;
 
     // --- Compressor ---

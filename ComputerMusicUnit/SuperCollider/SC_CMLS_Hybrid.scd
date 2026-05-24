@@ -138,56 +138,85 @@ s.waitForBoot({
         chordMidi.midicps.extend(6, 0)
     };
 
-    // --- SYNTHDEF (CON DSP SICURO E ANTI-GLITCH) ---
+    // --- SYNTHDEF: IBRIDO PITCH-SHIFT + PRESERVAZIONE FORMANTI ---
     SynthDef(\trueHarmonizer, {
         arg vocalPitch = 440, freqs = #[440, 554, 659, 0, 0, 0], amp = 0.5, gate = 1, vocalIn = 0, mix = 1.0;
 
-        var dryVoice, harmonies, safeVocalPitch, sigHarmonies, finalSig, smoothFreqs;
-        var voiceGates, pitchRatios, fxSignal;
+        var dryVoice, safeVocalPitch, smoothFreqs, voiceGates, pitchRatios;
+        var shiftedSource, harmonies, fxSignal, sigHarmonies, finalSig, breath;
+        var numBands = 48, bandFreqs, formants;
 
         dryVoice = SoundIn.ar(vocalIn);
 
-        // Smoothing dei segnali
+        // Smoothing dei segnali di controllo
         safeVocalPitch = Lag.kr(vocalPitch.max(70), 0.05);
         smoothFreqs = Lag.kr(freqs.max(1), 0.05);
-
-        // Array di gate (impedisce calcoli su voci vuote estese a 0Hz)
         voiceGates = Lag.kr(freqs > 0, 0.05);
         pitchRatios = smoothFreqs / safeVocalPitch;
 
-        harmonies = pitchRatios.collect({ |ratio, i|
-            // Previene divisioni/rapporti pericolosi
-            var safeRatio = Select.kr(freqs[i] > 0, [1.0, ratio]);
-
-            var shifted = PitchShift.ar(dryVoice, 0.1, safeRatio, 0.0, 0.005);
-            shifted = LPF.ar(shifted, 4500);
-
-            shifted * voiceGates[i];
+        // 1. ANALISI: Estrazione Inviluppo Formanti (La tua "Impronta Vocale")
+        bandFreqs = (1..numBands).collect({ |i| i.linexp(1, numBands, 80, 12000) });
+        formants = bandFreqs.collect({ |f|
+            Amplitude.ar(BPF.ar(dryVoice, f, 0.15), 0.005, 0.05);
         });
 
-        sigHarmonies = Splay.ar(harmonies, levelComp: false);
+        // 2. SORGENTE IBRIDA CON HUMANIZATION E ANTI-GLITCH
+        shiftedSource = pitchRatios.collect({ |ratio, i|
+            var safeRatio = Select.kr(freqs[i] > 0, [1.0, ratio]);
+            var noteChangeTrig, duckMask, drift, humanRatio, shift, microDelay;
 
-        // --- INIZIO MODIFICA FX IN PARALLELO ---
+            // --- Anti-Glitch (Slew-Rate Masking) ---
+            // Intercetta il cambio di nota. Env.perc chiude il volume a 0 per pochissimi ms,
+            // nascondendo il ricalcolo del buffer granulare.
+            noteChangeTrig = Changed.kr(freqs[i]);
+            duckMask = 1.0 - EnvGen.kr(Env.perc(0.005, 0.05, 1.0, -4), noteChangeTrig);
 
-        // 1. Creiamo un ramo parallelo per gli effetti
-        fxSignal = DelayN.ar(sigHarmonies, 0.1, [0.02, 0.035]);
+            // --- Pitch Drift (Vibrato organico) ---
+            // Oscillazione morbida e asincrona per ogni voce (tra 0.2 e 0.6 Hz).
+            drift = LFNoise2.kr(Rand(0.2, 0.6)).range(-0.015, 0.015);
+            humanRatio = safeRatio + (drift * (freqs[i] > 0)); // Si applica solo se la nota è attiva
 
-        // 2. Applichiamo l'HPF SOLO al segnale che andrà nel riverbero
+            // Motore granulare
+            shift = PitchShift.ar(dryVoice, 0.1, humanRatio, 0.0, 0.005);
+
+            // --- Micro-Timing ---
+            // Ritardo indipendente tra 5ms e 35ms per separare gli attacchi.
+            microDelay = DelayC.ar(shift, 0.05, Rand(0.005, 0.035));
+
+            // Somma con i gate e la maschera anti-glitch
+            microDelay * voiceGates[i] * duckMask;
+        }).sum;
+
+        // 3. SINTESI E GAIN STAGING
+        harmonies = bandFreqs.collect({ |f, i|
+            BPF.ar(shiftedSource, f, 0.15) * formants[i];
+        }).sum;
+
+		harmonies = HPF.ar(harmonies, 80);
+
+        // --- NUOVO EQ & SIBILANCE RECOVERY ---
+        // Boost (+6dB) oltre i 6000 Hz per aprire il suono
+        harmonies = BHiShelf.ar(harmonies, 6000, 1.0, 6.0);
+
+        // Saturazione leggermente allentata per non schiacciare le alte frequenze
+        harmonies = (harmonies * 8.0).tanh * 2.0;
+
+        // Recupero intelligibilità: prendiamo le "S" e "T" dalla voce pulita
+        // e le aggiungiamo ai cori solo quando c'è un accordo attivo.
+        breath = HPF.ar(dryVoice, 6000) * (freqs > 0).sum.sign * 0.20;
+        harmonies = harmonies + breath;
+
+        // 4. EFFETTI E SPAZIALIZZAZIONE
+        fxSignal = DelayN.ar(harmonies, 0.1, [0.02, 0.035]);
         fxSignal = HPF.ar(fxSignal, 400);
-
-        // 3. Generiamo il riverbero 100% wet (mix: 1.0)
         fxSignal = FreeVerb.ar(fxSignal, mix: 1.0, room: 0.7, damp: 0.5);
 
-        // 4. Sommiamo le armonie dry al loro riverbero filtrato (dosando la quantità, ex mix: 0.4)
-        sigHarmonies = sigHarmonies + (fxSignal * 0.4);
-
-        // --- FINE MODIFICA ---
+        sigHarmonies = DelayN.ar(harmonies, 0.1, [0.02, 0.035]) * 1.2 + (fxSignal * 0.4);
 
         // MIX FINALE
         finalSig = dryVoice + (sigHarmonies * mix);
         finalSig = finalSig * amp * EnvGen.kr(Env.asr(0.05, 1, 0.1), gate, doneAction: 2);
 
-        // Limiter sul master per proteggere l'intero output audio
         finalSig = Limiter.ar(finalSig, 0.98, 0.01);
         Out.ar(0, finalSig);
     }).add;
