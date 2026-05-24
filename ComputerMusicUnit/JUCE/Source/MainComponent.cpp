@@ -204,11 +204,18 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         }
 
         // 2. Process Guitar
+        // 2. Process Guitar
         float guitarProcessed = applyGate(guitarIn[i], gateEnvGuitar, gateGainGuitar, gateReleaseCoeffGuitar);
         guitarProcessed = applyCompressor(guitarProcessed, compEnvGuitar);
-        applyEnvelopeFollower(guitarProcessed, envGuitar);
 
-        circularBuffer[writeIndex] = guitarProcessed;
+        // APPLICAZIONE DEL LPF PER ISOLARE LA FONDAMENTALE
+        lpfState = lpfState + lpfAlpha * (guitarProcessed - lpfState);
+        float guitarFilteredForAnalysis = lpfState;
+
+        applyEnvelopeFollower(guitarFilteredForAnalysis, envGuitar);
+
+        // Salviamo il segnale FILTRATO nel buffer per l'analisi FFT
+        circularBuffer[writeIndex] = guitarFilteredForAnalysis;
 
         writeIndex = (writeIndex + 1) % windowSize;
         samplesSinceLastAnalysis++;
@@ -444,24 +451,22 @@ float MainComponent::snapToGridGuitar(float pitchHz)
 {
     if (pitchHz <= 0.0f) return 0.0f;
 
-    // Conversione MIDI
     float currentMidiNote = 69.0f + 12.0f * std::log2(pitchHz / 440.0f);
 
-    // Applica Isteresi (tolleranza maggiore per stabilizzare l'HPS)
     if (lastSnappedMidiGuitar < 0.0f)
     {
         lastSnappedMidiGuitar = std::round(currentMidiNote);
     }
     else
     {
-        // Richiediamo una variazione di 0.7 semitoni per cambiare nota
-        if (std::abs(currentMidiNote - lastSnappedMidiGuitar) > 0.7f)
+        // Aumenta la soglia a 1.2 semitoni o più. 
+        // L'algoritmo deve essere *molto* sicuro per cambiare l'armonia di base.
+        if (std::abs(currentMidiNote - lastSnappedMidiGuitar) > 0.8f)
         {
             lastSnappedMidiGuitar = std::round(currentMidiNote);
         }
     }
 
-    // Riconversione in Hertz perfettamente intonati
     return 440.0f * std::pow(2.0f, (lastSnappedMidiGuitar - 69.0f) / 12.0f);
 }
 

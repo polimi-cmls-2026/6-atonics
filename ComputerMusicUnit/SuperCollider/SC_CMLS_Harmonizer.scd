@@ -199,6 +199,9 @@ s.waitForBoot({
     OSCdef(\vocalPitch, { |msg|
         ~vocalPitch = msg[1];
 
+		// --- RIGA DI DEBUG VOCE ---
+        "[VOICE] %".format(~vocalPitch.round(0.01)).postln;
+
         if(~activeSynth.notNil) {
             if(~isFrozen == 1) {
                 // MODO FREEZE: Aggiorna solo la voce per compensare i movimenti, ma non l'accordo!
@@ -220,6 +223,9 @@ s.waitForBoot({
         if(~sourceSelect == 1) {
             if(~isFrozen == 0) { // La chitarra aggiorna l'accordo SOLO se NON siamo in Freeze
                 ~rootFreq = msg[1];
+				// --- RIGA DI DEBUG CHITARRA ---
+                "[GUITAR] %".format(~rootFreq.round(0.01)).postln;
+
                 if(~activeSynth.notNil) {
                     ~activeSynth.set(\freqs, ~getChordFreqs.value(~rootFreq, ~complexity, ~tonicMidi, ~scaleMode, ~vocalPitch));
                 }

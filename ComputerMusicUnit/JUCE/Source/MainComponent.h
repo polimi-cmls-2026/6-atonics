@@ -102,7 +102,7 @@ private:
 
     // LPF for guitar analysus
     float lpfState = 0.0f;
-	float lpfCutoffHz = 350.0f; // Set desired cutoff frequency
+	float lpfCutoffHz = 150.0f; // Set desired cutoff frequency
     float lpfAlpha = 0.0f;
 
     // --- Compressor ---

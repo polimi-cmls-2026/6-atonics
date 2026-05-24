@@ -59,9 +59,24 @@ public:
         }
 
         float rmsRatio = (prevRms > 1e-6f) ? (rms / prevRms) : 999.0f;
-        if (rmsRatio > attackRatioThreshold)
-            resetMedianHistory();
+
+        if (rmsRatio > attackRatioThreshold) {
+            // Invece di resettare, ignora i prossimi 2-3 frame (circa 45-70ms) 
+            // finché il suono non diventa periodico.
+            transientHoldFrames = 3;
+        }
         prevRms = rms;
+
+        // Se siamo nel transitorio, restituisci l'ultimo pitch valido (mediana attuale)
+        if (transientHoldFrames > 0) {
+            transientHoldFrames--;
+            if (!medianHistory.empty()) {
+                std::vector<float> sorted = medianHistory;
+                std::sort(sorted.begin(), sorted.end());
+                return sorted[sorted.size() / 2];
+            }
+            return 0.0f;
+        }
 
         // --- 3. Fenêtrage de Hann e ZERO-PADDING ---
         // Copia i campioni reali
@@ -104,8 +119,8 @@ public:
         // Fino a 160Hz (circa un Mi/Re3) il peso è 1.0. 
         // Da 160Hz a 400Hz sfuma fino a 0.1, penalizzando i cantini.
         // ==========================================================
-        float fadeStartHz = 160.0f;
-        float fadeEndHz = 400.0f;
+        float fadeStartHz = 120.0f; // Inizia il fade molto prima (dopo il Si2)
+        float fadeEndHz = 220.0f; // Abbattimento quasi totale prima del Do centrale
 
         for (int i = minBin; i <= maxBin; ++i)
         {
@@ -115,9 +130,10 @@ public:
             if (freq > fadeStartHz)
             {
                 if (freq < fadeEndHz)
-                    weight = 1.0f - 0.9f * ((freq - fadeStartHz) / (fadeEndHz - fadeStartHz));
+                    // Curva esponenziale/quadratica per un taglio più drastico
+                    weight = std::pow(1.0f - ((freq - fadeStartHz) / (fadeEndHz - fadeStartHz)), 2.0f);
                 else
-                    weight = 0.1f;
+                    weight = 0.01f; // Punizione severa, non 0.1
             }
             hpsSpectrum[i] *= weight;
         }
@@ -162,14 +178,15 @@ public:
     // -------------------------------------------------------------------------
     float rmsThreshold      = 0.008f;   // Seuil silence (ajuste selon ton préamp)
     float attackRatioThreshold = 2.5f;  // Ratio RMS déclenchant un reset médian
-    float minFreqHz         = 80.0f;    // Mi grave guitare basse : 41 Hz / guitare : 82 Hz
-    float maxFreqHz         = 800.0f;   // Limite haute (harmoniques jusqu'à 800 Hz)
+    float minFreqHz = 80.0f;    // Leggermente sotto il Mi grave (82.4 Hz)
+    float maxFreqHz = 300.0f;   // Taglia fuori tutto ciò che sta sopra il Re4
 
 private:
     int    windowSize;
     int    fftSize;
     double sampleRate;
     int    medianFrames = 3;            // 3 frames = ~70 ms de latence médian à 44100/hop1024
+    int transientHoldFrames = 0;
 
     std::vector<float>               hannWindow;
     std::vector<std::complex<float>> fftBuffer;
