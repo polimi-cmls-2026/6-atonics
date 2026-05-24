@@ -413,9 +413,9 @@ float MainComponent::snapToGrid(float pitchHz)
         lastSnappedMidiVoice = std::round(currentMidiNote);
     }
     else {
-        // Richiedi che la voce sia almeno oltre l'80% verso la prossima nota
-        // per innescare il cambio. Questo uccide i trilli sui confini.
-        if (std::abs(currentMidiNote - lastSnappedMidiVoice) > 0.8f) {
+        // Soglia abbassata a 0.55 per permettere transizioni vocali naturali
+        // mantenendo al contempo la stabilità sui confini
+        if (std::abs(currentMidiNote - lastSnappedMidiVoice) > 0.55f) {
             lastSnappedMidiVoice = std::round(currentMidiNote);
         }
     }

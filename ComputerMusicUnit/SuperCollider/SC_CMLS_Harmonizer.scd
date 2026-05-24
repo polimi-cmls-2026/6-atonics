@@ -15,7 +15,7 @@ s.waitForBoot({
     ~rootFreq = 440;
     ~vocalPitch = 440;
     ~complexity = 2;         // Default: Triade
-    ~tonicMidi = 60;         // 60 = Do
+    ~tonicMidi = 69;         // 60 = Do
     ~scaleMode = 0;          // 0 = Maggiore, 1 = Minore Naturale
     ~sourceSelect = 1;       // 1 = Guitar-based, 0 = Voice-based
     ~gain = 0.5;
