@@ -1,6 +1,7 @@
 # Guitar-Guided Diatonic Harmonizer
 
 Group project realized for the **Computer Music: Languages and Systems** course, Academic Year 2025/2026, Politecnico di Milano.
+Components of the group: Alberto Javier Guidi, Arianna Bocchi, Damiano Carrara, Lorenzo Bo, Marin Filhol, Raffaello Michele Rotondi
 
 ## Project Description
 The system consists of a real-time polyphonic harmonizer-vocoder with a modular architecture, designed for live performances. The system analyzes two separate audio inputs (guitar and vocal microphone), extracts dynamic and pitch information, and generates a complex vocal harmonization that follows the harmonic structure dictated by the guitar (or by the voice itself) within a diatonic scale set by the user.
