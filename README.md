@@ -87,17 +87,20 @@ Find the audio device initialization and change `"ASIO"` to `"CoreAudio"`:
 deviceManager.setCurrentAudioDeviceType("ASIO", true);
 // To this:
 deviceManager.setCurrentAudioDeviceType("CoreAudio", true);
+```
 
 **In SuperCollider('SC_CMLS_Hybrid.scd')**
-
+```
 // Change this:
 s.options.device = "ASIO : Voicemeeter AUX Virtual ASIO";
 // To this (check your exact device name by running ServerOptions.devices.do(_.postln)):
 s.options.device = "BlackHole 2ch";
+```
 
 **In Processing (`processing.pde`):**
-
+```
 // Look at the console output from printArray(Serial.list());
 // Find the index corresponding to your board (e.g., /dev/cu.usbmodem14101)
 // Change the index in this line accordingly:
 String portName = Serial.list()[0]; // Change 0 to your actual port index
+```
