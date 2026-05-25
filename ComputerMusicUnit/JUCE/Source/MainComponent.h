@@ -9,7 +9,7 @@
 #include <atomic>
 #include "Chordpitchdetector.h"
 
-//==============================================================================
+
 class MainComponent : public juce::AudioAppComponent,
     public juce::OSCReceiver::Listener<juce::OSCReceiver::MessageLoopCallback>,
     public juce::Timer
@@ -18,27 +18,23 @@ public:
     MainComponent();
     ~MainComponent() override;
 
+	// Functions inherited from AudioAppComponent
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
     void releaseResources() override;
-
     void paint(juce::Graphics& g) override;
     void resized() override;
-
     void timerCallback() override;
     void oscMessageReceived(const juce::OSCMessage& message) override;
 
 private:
-    // --- DSP Functions ---
+    // DSP Functions
     float applyGate(float inputSample, float& envelope, float& gainState, float releaseCoeff);
     float applyCompressor(float inputSample, float& envelope);
     float applyEnvelopeFollower(float inputSample, float& envelope);
     float detectPitchYIN(const float* audioBuffer, int bufferSize, double sampleRate);
 
-    void loadPreset(int presetIndex);
-    void sendPitchToSuperCollider(float pitchInHz);
-
-    // --- Audio Analysis Buffer (Overlapping Window) ---
+    // Audio Analysis Buffer (Overlapping Window) (Guitar)
     std::vector<float> circularBuffer;
     int writeIndex = 0;
     int windowSize = 2048;
@@ -50,7 +46,7 @@ private:
     std::vector<float> frameGuitar;
     std::vector<float> sortedHistoryGuitar;
 
-    // --- Audio Analysis Buffer (Voice) ---
+    // Audio Analysis Buffer (Voice)
     std::vector<float> circularBufferVoice;
     int writeIndexVoice = 0;
     int samplesSinceLastAnalysisVoice = 0;
@@ -60,25 +56,26 @@ private:
     std::vector<float> frameVoice;
     std::vector<float> sortedHistoryVoice;
 
-    // Variable for hysteresis
+    // Variables for hysteresis
     float lastSnappedMidiVoice = -1.0f;
     float lastSnappedMidiGuitar = -1.0f;
 
-	// Variable for median filtering
+	// Variables for median filtering
     std::vector<float> pitchHistoryVoice;
-
     std::vector<float> pitchHistoryGuitar;
 
     std::atomic<float> uiPitchVoice{ 0.0f };
     std::atomic<float> uiPitchGuitar{ 0.0f };
 
+    // Quantization functions
     float snapToGrid(float pitchHz);
     float snapToGridGuitar(float pitchHz);
+    void sendPitchToSuperCollider(float pitchInHz);
     void sendVocalPitchToSuperCollider(float pitchInHz);
 
     float smoothedMidiVoice = -1.0f;
 
-    // --- Noise Gate ---
+    // Noise Gate
     float gateThreshold = 0.01f;
     float gateAttack = 0.002f;
     float gateAttackCoeff = 0.0f;
@@ -95,17 +92,17 @@ private:
     float gateGainGuitar = 0.0f;
     float gateGainVoice = 0.0f;
 
-    // --- Deadband State ---
+    // Deadband State
     float lastSentGuitarPitch = -1.0f;
     float lastSentVoicePitch = -1.0f;
     float deadbandCents = 30.0f; // Tolerance for guitar
 
     // LPF for guitar analysus
     float lpfState = 0.0f;
-	float lpfCutoffHz = 150.0f; // Set desired cutoff frequency
+	float lpfCutoffHz = 150.0f; // Set desired cutoff frequency (Focus on bass notes)
     float lpfAlpha = 0.0f;
 
-    // --- Compressor ---
+    // Compressor 
     float compThreshold = -20.0f;
     float compRatio = 4.0f;
     float compAttack = 0.01f;
@@ -116,7 +113,7 @@ private:
     float compEnvGuitar = 0.0f;
     float compEnvVoice = 0.0f;
 
-    // --- Envelope Follower ---
+    // Envelope Follower
     float envFollowerAttack = 0.002f;
     float envFollowerRelease = 0.05f;
     float envFollowerAttackCoeff = 0.0f;
@@ -124,39 +121,19 @@ private:
     float envGuitar = 0.0f;
     float envVoice = 0.0f;
 
-    // --- Pitch Detection (YIN specific) ---
+    // Pitch Detection (YIN)
     float detectedPitch = 0.0f;
     float yinThreshold = 0.15f;
 
-	// HPS Pitch Detector for Chord Detection
+	// HPS Custom Pitch Detector for guitar Chord Detection
     ChordPitchDetector chordDetector{ 2048, 8192, 44100.0 };
 
-    // --- OSC ---
+    // OSC
     juce::OSCSender   oscSender;
     juce::OSCReceiver oscReceiver;
     static constexpr int oscSendPort = 57120;
     static constexpr int oscReceivePort = 9000;
     const juce::String oscSendHost = "127.0.0.1";
-
-    // --- Presets ---
-    struct Preset
-    {
-        float gateThreshold;
-        float compThreshold;
-        float compRatio;
-        float compMakeupGain;
-        float envFollowerRelease;
-    };
-
-    std::array<Preset, 3> presets =
-    { {
-        { 0.01f,  -20.0f,  2.0f, 1.2f, 0.3f },
-        { 0.02f,  -15.0f,  6.0f, 1.8f, 0.2f },
-        { 0.005f, -10.0f, 10.0f, 2.0f, 0.5f }
-    } };
-
-    int currentPreset = 0;
-    juce::Label presetLabel;
 
     juce::TextButton settingsButton;
 
