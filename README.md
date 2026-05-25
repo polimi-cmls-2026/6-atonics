@@ -67,3 +67,37 @@ The flow of signals and control messages follows a star/hybrid topology optimize
 3. **SuperCollider Execution:** Open the `SC_CMLS_Hybrid.scd` file, verify the matching of audio device names in the server options, and execute the entire code block to initialize the OSC receivers and instantiate the `trueHarmonizer` module.
 4. **JUCE Execution:** Open and run the standalone application. Access the "Audio Settings..." via the UI to properly allocate the physical input channels of the audio interface.
 5. **Interface Startup:** Run the Processing sketch `processing.pde` to start routing sensor messages and activate the graphical monitoring.
+
+## Cross-Platform Notes: Windows vs macOS
+
+This project was developed, tested, and optimized specifically for **Windows**. However, the entire software stack (JUCE, SuperCollider, Processing) is cross-platform. To run the system on macOS, a few environment-specific adjustments are required:
+
+### 1. Audio Drivers & Virtual Routing
+* **Windows (Default):** The system relies on **ASIO** drivers and **VoiceMeeter** (or Virtual Audio Cable) to route the processed audio from JUCE to SuperCollider with minimal latency.
+* **macOS:** ASIO is not supported. macOS uses its native **CoreAudio**. To route the audio internally, you will need to install a virtual audio driver like **BlackHole (2ch or 16ch)**.
+
+### 2. Required Code Modifications for macOS
+
+If you are running the project on a Mac, you must change the following lines in the source code before compiling or executing:
+
+**In JUCE (`MainComponent.cpp`):**
+Find the audio device initialization and change `"ASIO"` to `"CoreAudio"`:
+```cpp
+// Change this:
+deviceManager.setCurrentAudioDeviceType("ASIO", true);
+// To this:
+deviceManager.setCurrentAudioDeviceType("CoreAudio", true);
+
+**In SuperCollider('SC_CMLS_Hybrid.scd')**
+
+// Change this:
+s.options.device = "ASIO : Voicemeeter AUX Virtual ASIO";
+// To this (check your exact device name by running ServerOptions.devices.do(_.postln)):
+s.options.device = "BlackHole 2ch";
+
+**In Processing (`processing.pde`):**
+
+// Look at the console output from printArray(Serial.list());
+// Find the index corresponding to your board (e.g., /dev/cu.usbmodem14101)
+// Change the index in this line accordingly:
+String portName = Serial.list()[0]; // Change 0 to your actual port index
