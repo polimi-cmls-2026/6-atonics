@@ -89,7 +89,7 @@ deviceManager.setCurrentAudioDeviceType("ASIO", true);
 deviceManager.setCurrentAudioDeviceType("CoreAudio", true);
 ```
 
-**In SuperCollider('SC_CMLS_Hybrid.scd')**
+**In SuperCollider(`SC_CMLS_Hybrid.scd`)**
 ```
 // Change this:
 s.options.device = "ASIO : Voicemeeter AUX Virtual ASIO";
