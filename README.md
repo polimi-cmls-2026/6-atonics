@@ -1,6 +1,7 @@
 # Guitar-Guided Diatonic Harmonizer
 
 Group project realized for the **Computer Music: Languages and Systems** course, Academic Year 2025/2026, Politecnico di Milano.
+
 Components of the group: Alberto Javier Guidi, Arianna Bocchi, Damiano Carrara, Lorenzo Bo, Marin Filhol, Raffaello Michele Rotondi
 
 ## Project Description
