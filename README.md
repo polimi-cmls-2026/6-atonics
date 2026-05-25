@@ -3,7 +3,7 @@
 Group project realized for the **Computer Music: Languages and Systems** course, Academic Year 2025/2026, Politecnico di Milano.
 
 ## Project Description
-The system consists of a real-time polyphonic harmonizer vocoder with a modular architecture, designed for live performances. The system analyzes two separate audio inputs (guitar and microphone voice), extracts dynamic and pitch information, and generates a complex vocal harmonization that follows the harmonic structure dictated by the guitar (or by the voice itself) within a diatonic scale set by the user.
+The system consists of a real-time polyphonic harmonizer-vocoder with a modular architecture, designed for live performances. The system analyzes two separate audio inputs (guitar and vocal microphone), extracts dynamic and pitch information, and generates a complex vocal harmonization that follows the harmonic structure dictated by the guitar (or by the voice itself) within a diatonic scale set by the user.
 
 ---
 
@@ -35,37 +35,22 @@ The interactive graphical interface developed in Processing acts as a visual con
 
 ### 3. Interaction System Unit (Arduino Hardware)
 The physical unit captures the analog and digital interactions of the performer on stage:
-* **Managed Inputs:** A rotary encoder (complexity/chord vertices selection), a linear potentiometer (effect Dry/Wet mix control), and a push button/pedal (Freeze function activation).
+* **Managed Inputs:** A joystick (complexity selection), a linear potentiometer (effect Dry/Wet mix control), and a push button/pedal (Freeze function activation).
 * **Serial Communication:** Data is structured into high-frequency compacted strings in the format `DATA,encoder_value,potentiometer_value,button_state\n` and transmitted via USB at 115200 baud to the serial port read by Processing.
-
----
-
-## Protocols and Data Routing
-
-The flow of signals and control messages follows a star/hybrid topology optimized to reduce overall latency:
-
-1. **Hardware → Processing (Serial):**
-   * Channel: USB Serial @ 115200 baud.
-   * String format: `DATA,<1-4>,<0-100>,<0-1>`.
-2. **Processing → SuperCollider (OSC):**
-   * Destination port: `57120`
-   * Sent messages: `/complexity`, `/mix`, `/freeze`, `/tonic`, `/mode`, `/chordLeader`.
-3. **JUCE → SuperCollider (OSC):**
-   * Destination port: `57120`
-   * Sent messages: `/guitarPitch` (Hz), `/vocalPitch` (Hz), `/envelope/guitar` (RMS), `/envelope/voice` (RMS).
   
 ## Setup and Execution
 
 ### Hardware and Software Prerequisites
+* **Audio Interface**: Minimum 2 channels
 * **Environments:** JUCE 7+, SuperCollider 3.12+, Processing 4.x, Arduino IDE.
-* **Audio Drivers:** Native ASIO support (VoiceMeeter Banana or ASIO4ALL recommended on Windows).
+* **Audio Drivers:** Native ASIO support (VoiceMeeter Banana recommended on Windows).
 * **Processing Libraries:** `oscP5`, `netP5`, `processing.serial`.
 
 ### Execution Procedure
 1. **Hardware Setup:** Upload the Arduino sketch to the prototyping board, verifying that the serial string follows the `DATA,X,Y,Z` format.
-2. **Audio Routing:** Start VoiceMeeter and configure the virtual audio patches so that the output of the channels processed by JUCE (Channel 1 Mic, Channel 2 Guitar) is routed to the virtual input of SuperCollider.
+2. **Audio Routing:** Start VoiceMeeter and select your audio interface's ASIO drivers. Make sure the 2 inputs (Channel 1 Mic, Channel 2 Guitar) are sent to JUCE and configure the virtual audio patches so that the output of JUCE is routed to the virtual input of SuperCollider.
 3. **SuperCollider Execution:** Open the `SC_CMLS_Hybrid.scd` file, verify the matching of audio device names in the server options, and execute the entire code block to initialize the OSC receivers and instantiate the `trueHarmonizer` module.
-4. **JUCE Execution:** Open and run the standalone application. Access the "Audio Settings..." via the UI to properly allocate the physical input channels of the audio interface.
+4. **JUCE Execution:** Open and run the standalone application. Access the "Audio Settings..." via the UI to select Voicemeeter Virtual ASIO (or equivalent, depending on ypur setup).
 5. **Interface Startup:** Run the Processing sketch `processing.pde` to start routing sensor messages and activate the graphical monitoring.
 
 ## Cross-Platform Notes: Windows vs macOS
@@ -73,8 +58,8 @@ The flow of signals and control messages follows a star/hybrid topology optimize
 This project was developed, tested, and optimized specifically for **Windows**. However, the entire software stack (JUCE, SuperCollider, Processing) is cross-platform. To run the system on macOS, a few environment-specific adjustments are required:
 
 ### 1. Audio Drivers & Virtual Routing
-* **Windows (Default):** The system relies on **ASIO** drivers and **VoiceMeeter** (or Virtual Audio Cable) to route the processed audio from JUCE to SuperCollider with minimal latency.
-* **macOS:** ASIO is not supported. macOS uses its native **CoreAudio**. To route the audio internally, you will need to install a virtual audio driver like **BlackHole (2ch or 16ch)**.
+* **Windows (Default):** The system relies on **ASIO** drivers and **VoiceMeeter** to route the processed audio from JUCE to SuperCollider with minimal latency.
+* **macOS:** ASIO is not supported. macOS uses its native **CoreAudio**. To route the audio internally, you will need to install a virtual audio driver like **BlackHole (2ch or 16ch)**, to use in place of Voicemeeter.
 
 ### 2. Required Code Modifications for macOS
 
