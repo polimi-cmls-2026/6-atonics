@@ -13,7 +13,7 @@ The system consists of a real-time polyphonic harmonizer-vocoder with a modular 
 
 ### 1. Computer Music Unit (JUCE & SuperCollider)
 
-The musical processing unit handles signal conditioning and synthesis through two cooperating environments interconnected via Open Sound Control (OSC) and virtual ASIO audio routing (VoiceMeeter / Virtual Audio Cable).
+The musical processing unit handles signal conditioning and synthesis through two cooperating environments interconnected via Open Sound Control (OSC) and virtual ASIO audio routing (VoiceMeeter).
 
 #### JUCE (DSP & Pitch Tracking)
 Developed as a standalone C++ application optimized for ultra-low latency, it manages the initial signal conditioning chain on the input channels:
