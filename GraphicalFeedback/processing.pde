@@ -224,27 +224,38 @@ void draw() {
   text("WET", 0, 85); 
   popMatrix();
   
-  // 3. TITLE
+  // 3. TITLE WITH OVAL SHADOW
   pushStyle();
-  fill(0, 200, 255);
   textAlign(CENTER, CENTER);
   textSize(64);
-  text("6-Atonics", width / 2, height / 2 - 200); 
+  // compute title position and width
+  float tx = width / 2;
+  float ty = height / 2 - 200;
+  float tw = textWidth("6-Atonics");
+  // draw soft oval shadow under the title (two layers for softness)
+    noStroke();
+    fill(0, 120, 170, 60);
+    ellipse(tx, ty + 20, tw * 1.2, 48);
+    fill(0, 90, 140, 40);
+    ellipse(tx, ty + 26, tw * 1.35, 64);
+  // draw main title on top
+  fill(0, 200, 255);
+  text("6-Atonics", tx, ty);
   popStyle();
 
-  // BOTTOM SLOTS
+  // BOTTOM SLOTS (positions adjusted across window width)
   pushMatrix();
-  translate(55, 460); 
+  translate(int(width * 0.2 - (10 * 22) / 2.0), 460); 
   drawPianoSlot();
   popMatrix();
 
   pushMatrix();
-  translate(420, 500); 
+  translate(int(width * 0.5 - 120 / 2.0), 500); 
   drawDropdownSlot();
   popMatrix();
 
   pushMatrix();
-  translate(620, 500); // MODE moved to 620
+  translate(int(width * 0.8 - 120 / 2.0), 500); // MODE moved dynamically
   drawModeSlot(currentModes);
   popMatrix();
 
