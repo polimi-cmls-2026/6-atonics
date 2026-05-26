@@ -2,41 +2,38 @@ import processing.serial.*;
 import oscP5.*;
 import netP5.*;
 
-// --- VARIABILI DI RETE E SERIALE ---
+// NETWORK AND SERIAL VARIABLES
 Serial myPort;
 OscP5 oscP5;
 NetAddress superColliderDest;
 NetAddress juceDest;
 
-// --- VARIABILI DATI SENSORI ---
-int targetPot = 1;        // Valore dell'encoder (da 1 a 4)
-int wetValue = 50;        // Valore WET (da 0 a 100)
-int button = 0;           // Valore pulsante (Toggle)
+// SENSOR DATA VARIABLES
+int targetPot = 1;        // Encoder value (from 1 to 4)
+int wetValue = 50;        // WET value (from 0 to 100)
+int button = 0;           // Button value (Toggle)
 
-// --- VARIABILI CHORD LEADER ---
-int chordLeaderState = 0; // 0 = Chitarra, 1 = Voce
-
-// --- VARIABILI PER L'ANIMAZIONE FLUIDA (GEOMETRIA) ---
+// FLUID ANIMATION VARIABLES (GEOMETRY)
 int currentDrawPot = 1;
 float[] px = new float[5];
 float[] py = new float[5];
-float angoloProgresso = radians(160.5);
+float progressAngle = radians(160.5);
 
-// --- VARIABILI PER L'EFFETTO FREEZE E INTERPOLAZIONE WET ---
+// FREEZE EFFECT AND WET INTERPOLATION VARIABLES
 float freezeIntensity = 0;
 float iceTime = 0;         
 float displayWet = 0;     
 
-// --- VARIABILI PER I MENU A TENDINA (SLOT 2 e 3) ---
+// DROPDOWN MENU VARIABLES (SLOTS 2 AND 3)
 String[] keys = {"C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B"};
 int selectedKeyIndex = 0;  
 boolean dropdownOpen = false; 
 
-// --- VARIABILI PER L'OPACITÀ DEGLI ELEMENTI REATTIVI ---
-float alphaCerchio = 255;
-float alphaLinea   = 0;
+// REACTIVE ELEMENTS OPACITY VARIABLES
+float alphaCircle = 255;
+float alphaLine   = 0;
 
-// --- VARIABILI DI STATO OSC (ANTISPAM) ---
+// OSC STATE VARIABLES (ANTISPAM)
 String lastSentRoot = "";
 String lastSentMode = "";
 int lastArduinoPot = -1;
@@ -50,59 +47,59 @@ boolean modeDropdownOpen = false;
 void setup() {
   size(1000, 600);
   
-  // SETUP ANIMAZIONE
+  // ANIMATION SETUP
   for (int i = 0; i < 4; i++) {
     px[i] = 0;
     py[i] = 0;
   }
   
-  // SETUP SERIALE
+  // SERIAL SETUP
   printArray(Serial.list());
   String portName = Serial.list()[0];
   myPort = new Serial(this, portName, 115200);
   myPort.bufferUntil('\n'); 
   
-  // SETUP OSC
+  // OSC SETUP
   oscP5 = new OscP5(this, 12000);
   superColliderDest = new NetAddress("127.0.0.1", 57120); 
   juceDest = new NetAddress("127.0.0.1", 8000);
 }
 
 void draw() {
-  // --- 0. CONTROLLI DI SICUREZZA MENU ---
+  // 0. MENU SAFETY CHECKS
   String[] currentModes = basicModes;
   if (selectedModeIndex >= currentModes.length) {
     selectedModeIndex = 0;
   }
 
-  // --- 1. LOGICA DI TRANSIZIONE FREEZE & VELOCITÀ ---
+  // 1. FREEZE TRANSITION AND SPEED LOGIC
   if (button == 1) {
     freezeIntensity = lerp(freezeIntensity, 1.0, 0.03);
   } else {
     freezeIntensity = lerp(freezeIntensity, 0.0, 0.08); 
   }
   
-  float velocitaMinima = 0.008;
-  float velocitaMassima = 0.04; 
-  float velocitaGhiaccio = map(wetValue, 0, 100, velocitaMinima, velocitaMassima);
-  iceTime += velocitaGhiaccio;
+  float minSpeed = 0.008;
+  float maxSpeed = 0.04; 
+  float iceSpeed = map(wetValue, 0, 100, minSpeed, maxSpeed);
+  iceTime += iceSpeed;
   displayWet = lerp(displayWet, wetValue, 0.15);
   
-  // --- 2. SFONDO REATTIVO ---
-  color sfondoNormale = color(30, 30, 30);       
-  color sfondoGhiaccio = color(25, 35, 50);
-  background(lerpColor(sfondoNormale, sfondoGhiaccio, freezeIntensity));
+  // 2. REACTIVE BACKGROUND
+  color normalBackground = color(30, 30, 30);       
+  color iceBackground = color(25, 35, 50);
+  background(lerpColor(normalBackground, iceBackground, freezeIntensity));
   
-  // --- TESTI DI STATO ---
+  // STATUS TEXTS
   fill(255);
   textAlign(LEFT, TOP);
   textSize(12);
   text("Bridge Serial -> OSC", 10, 10);
-  text("Vertici (Encoder): " + targetPot, 10, 30);
-  text("Potenziometro (Wet): " + wetValue, 10, 50);
-  text("Pulsante (Button): " + button, 10, 70);
+  text("Vertices (Encoder): " + targetPot, 10, 30);
+  text("Potentiometer (Wet): " + wetValue, 10, 50);
+  text("Button: " + button, 10, 70);
 
-  // --- CALCOLO TARGET GEOMETRIA ---
+  // GEOMETRY TARGET CALCULATION
   float R = 100;
   float[] targetX = new float[5];
   float[] targetY = new float[5];
@@ -136,41 +133,41 @@ void draw() {
     targetX[4] = R*sin(PI*8/5);  targetY[4] = -R*cos(PI*8/5);
   }
   
-  boolean inMovimento = false;
-  float velocita = 0.15;
+  boolean isMoving = false;
+  float speed = 0.15;
   for (int i = 0; i < 5; i++) {
-    px[i] = lerp(px[i], targetX[i], velocita);
-    py[i] = lerp(py[i], targetY[i], velocita);
+    px[i] = lerp(px[i], targetX[i], speed);
+    py[i] = lerp(py[i], targetY[i], speed);
     if (dist(px[i], py[i], targetX[i], targetY[i]) > 1.0) {
-      inMovimento = true;
+      isMoving = true;
     }
   }
   
-  int puntiDaDisegnare = max(currentDrawPot, targetPot+1);
-  if (!inMovimento) {
+  int pointsToDraw = max(currentDrawPot, targetPot+1);
+  if (!isMoving) {
     currentDrawPot = targetPot+1;
   }
   
-  // --- CONTENUTO 1: LA GEOMETRIA (1/3) ---
+  // CONTENT 1: GEOMETRY (1/3)
   pushMatrix();
   translate(width / 3, height / 2);
   stroke(255, 150); 
   strokeWeight(3);
   noFill();
   
-  if (puntiDaDisegnare > 1) {
+  if (pointsToDraw > 1) {
     beginShape();
-    for (int i = 0; i < puntiDaDisegnare; i++) {
+    for (int i = 0; i < pointsToDraw; i++) {
       vertex(px[i], py[i]);
     }
-    if (puntiDaDisegnare > 2) {
+    if (pointsToDraw > 2) {
       endShape(CLOSE);
     } else {
       endShape();
     }
   }
   
-  for (int i = 0; i < puntiDaDisegnare; i++) {
+  for (int i = 0; i < pointsToDraw; i++) {
     noStroke();
     fill(0, 200, 255, 50); 
     ellipse(px[i], py[i], 45, 45); 
@@ -179,34 +176,34 @@ void draw() {
   }
   popMatrix();
 
-  // --- CONTENUTO 2: WET GAUGE CON ICONA REATTIVA (2/3) ---
+  // CONTENT 2: WET GAUGE WITH REACTIVE ICON (2/3)
   pushMatrix();
   translate(2 * width / 3, height / 2 + 60); 
-  int diametro = 240;
+  int diameter = 240;
   
   noFill();
   stroke(0, 150, 255, 30); 
   strokeWeight(10); 
   strokeCap(ROUND);
-  arc(0, 0, diametro, diametro, radians(160), radians(380));
+  arc(0, 0, diameter, diameter, radians(160), radians(380));
   
-  angoloProgresso = map(displayWet, 0, 100, radians(160.5), radians(380));
+  progressAngle = map(displayWet, 0, 100, radians(160.5), radians(380));
   stroke(0, 200, 255); 
   strokeWeight(14);
-  arc(0, 0, diametro, diametro, radians(160), angoloProgresso);
+  arc(0, 0, diameter, diameter, radians(160), progressAngle);
   
-  alphaLinea = map(displayWet, 0, 100, 0, 255);
+  alphaLine = map(displayWet, 0, 100, 0, 255);
   float cx = 0;
   float cy = 15;
-  float dCerchio = 85;
+  float dCircle = 85;
   
   noFill();
-  stroke(0, 200, 255, alphaCerchio); 
+  stroke(0, 200, 255, alphaCircle); 
   strokeWeight(5);
-  ellipse(cx, cy, dCerchio, dCerchio);
+  ellipse(cx, cy, dCircle, dCircle);
   
   noFill();
-  stroke(0, 200, 255, alphaLinea); 
+  stroke(0, 200, 255, alphaLine); 
   strokeWeight(5);
   strokeJoin(ROUND); 
   strokeCap(ROUND);
@@ -227,7 +224,7 @@ void draw() {
   text("WET", 0, 85); 
   popMatrix();
 
-  // --- SLOT IN BASSO ---
+  // BOTTOM SLOTS
   pushMatrix();
   translate(55, 460); 
   drawPianoSlot();
@@ -239,13 +236,8 @@ void draw() {
   popMatrix();
 
   pushMatrix();
-  translate(620, 500); // MODO spostato a 620
+  translate(620, 500); // MODE moved to 620
   drawModeSlot(currentModes);
-  popMatrix();
-  
-  pushMatrix();
-  translate(820, 500); // LEADER inserito a 820
-  drawLeaderSlot();
   popMatrix();
 
   drawFreezeEffect();
@@ -316,83 +308,83 @@ void serialEvent(Serial myPort) {
 }
 
 void drawPianoSlot() {
-  int numTastiBianchi = 10;
-  int larghezzaTasto = 22; int altezzaTasto = 80;
-  color tastoSpento = color(200);
-  color tastoAcceso = color(0, 200, 255);
-  color tastoNeroColor = color(30);
+  int numWhiteKeys = 10;
+  int keyWidth = 22; int keyHeight = 80;
+  color keyOffColor = color(200);
+  color keyOnColor = color(0, 200, 255);
+  color blackKeyColor = color(30);
   
   String[] currentModes = basicModes;
   int safeModeIndex = (selectedModeIndex >= currentModes.length) ? 0 : selectedModeIndex;
   String mode = currentModes[safeModeIndex];
   
-  int[] intervalli = new int[targetPot+1];
-  intervalli[0] = 0; 
-  intervalli[1] = 7; 
+  int[] intervals = new int[targetPot+1];
+  intervals[0] = 0; 
+  intervals[1] = 7; 
   
   if (targetPot >= 2) {
-    if (mode.equals("Minor")) { intervalli[2] = 3; } 
-    else { intervalli[2] = 4; }
+    if (mode.equals("Minor")) { intervals[2] = 3; } 
+    else { intervals[2] = 4; }
   }
   if (targetPot >= 3) {
-    if (mode.equals("Minor")) { intervalli[3] = 10; } 
-    else { intervalli[3] = 11; }
+    if (mode.equals("Minor")) { intervals[3] = 10; } 
+    else { intervals[3] = 11; }
   }
   if (targetPot == 4) {
-    intervalli[4] = 14;
+    intervals[4] = 14;
   }
 
-  int[] notaTastoBianco = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16};
+  int[] whiteKeyMidiNote = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16};
   
   stroke(50); strokeWeight(2);
-  for (int i = 0; i < numTastiBianchi; i++) {
-    int notaMidiTasto = notaTastoBianco[i];
-    boolean notaAccesa = false;
-    for (int j = 0; j < intervalli.length; j++) {
-      if (intervalli[j]  == notaMidiTasto) { notaAccesa = true; }
+  for (int i = 0; i < numWhiteKeys; i++) {
+    int midiNoteTasto = whiteKeyMidiNote[i];
+    boolean isNoteOn = false;
+    for (int j = 0; j < intervals.length; j++) {
+      if (intervals[j]  == midiNoteTasto) { isNoteOn = true; }
     }
-    if (notaAccesa) fill(tastoAcceso);
-    else fill(tastoSpento);
-    rect(i * larghezzaTasto, 0, larghezzaTasto, altezzaTasto, 0, 0, 3, 3);
+    if (isNoteOn) fill(keyOnColor);
+    else fill(keyOffColor);
+    rect(i * keyWidth, 0, keyWidth, keyHeight, 0, 0, 3, 3);
   }
 
-  int larghezzaNero = 12;
-  int altezzaNero = 45;
-  int[] notaTastoNero = {1, 3, -1, 6, 8, 10, -1, 13, 15};
-  for (int i = 0; i < numTastiBianchi - 1; i++) {
-    if (notaTastoNero[i] != -1) {
-      int notaMidiNero = notaTastoNero[i];
-      float xNero = (i * larghezzaTasto) + larghezzaTasto - (larghezzaNero / 2.0);
-      boolean neroAcceso = false;
-      for (int j = 0; j < intervalli.length; j++) {
-        if (intervalli[j] == notaMidiNero) { neroAcceso = true; }
+  int blackKeyWidth = 12;
+  int blackKeyHeight = 45;
+  int[] blackKeyMidiNote = {1, 3, -1, 6, 8, 10, -1, 13, 15};
+  for (int i = 0; i < numWhiteKeys - 1; i++) {
+    if (blackKeyMidiNote[i] != -1) {
+      int midiNoteBlack = blackKeyMidiNote[i];
+      float xBlack = (i * keyWidth) + keyWidth - (blackKeyWidth / 2.0);
+      boolean isBlackOn = false;
+      for (int j = 0; j < intervals.length; j++) {
+        if (intervals[j] == midiNoteBlack) { isBlackOn = true; }
       }
-      if (neroAcceso) fill(tastoAcceso);
-      else fill(tastoNeroColor);
+      if (isBlackOn) fill(keyOnColor);
+      else fill(blackKeyColor);
       stroke(50); strokeWeight(1);
-      rect(xNero, 0, larghezzaNero, altezzaNero, 0, 0, 2, 2);
+      rect(xBlack, 0, blackKeyWidth, blackKeyHeight, 0, 0, 2, 2);
     }
   }
 
   fill(200); textAlign(CENTER, TOP); textSize(14);
-  float centroTastiera = (numTastiBianchi * larghezzaTasto) / 2.0;
+  float keyboardCenter = (numWhiteKeys * keyWidth) / 2.0;
   String root = keys[selectedKeyIndex];
-  String nomeAccordo = "";
+  String chordName = "";
   
-  if (targetPot == 1) nomeAccordo = "POWER (" + root + "5)";
+  if (targetPot == 1) chordName = "POWER (" + root + "5)";
   else if (targetPot == 2) {
-    String suff = mode.equals("Minor") ? "min" : "maj";
-    nomeAccordo = "TRIAD (" + root + suff + ")";
+    String suffix = mode.equals("Minor") ? "min" : "maj";
+    chordName = "TRIAD (" + root + suffix + ")";
   }
   else if (targetPot == 3) {
-    String suff = mode.equals("Minor") ? "min7" : "maj7";
-    nomeAccordo = "QUATRIAD (" + root + suff + ")";
+    String suffix = mode.equals("Minor") ? "min7" : "maj7";
+    chordName = "QUATRIAD (" + root + suffix + ")";
   }
   else if (targetPot == 4) {
-    String suff = mode.equals("Minor") ? "min7 add9" : "maj7 add9";
-    nomeAccordo = "EXTENDED (" + root + suff + ")";
+    String suffix = mode.equals("Minor") ? "min7 add9" : "maj7 add9";
+    chordName = "EXTENDED (" + root + suffix + ")";
   }
-  text(nomeAccordo, centroTastiera, altezzaTasto + 15);
+  text(chordName, keyboardCenter, keyHeight + 15);
 }
 
 void drawDropdownSlot() {
@@ -426,7 +418,7 @@ void drawModeSlot(String[] currentModes) {
     int itemH = 25; int totalH = currentModes.length * itemH;
     for (int i = 0; i < currentModes.length; i++) {
       int itemY = -totalH + (i * itemH);
-      float mX = mouseX - 620; float mY = mouseY - 500; // Aggiornato a 620
+      float mX = mouseX - 620; float mY = mouseY - 500; 
       if (mX >= 0 && mX <= w && mY >= itemY && mY < itemY + itemH) fill(0, 130, 180);
       else if (i == selectedModeIndex) fill(15, 60, 90); 
       else fill(40);
@@ -441,43 +433,12 @@ void drawModeSlot(String[] currentModes) {
   translate(w - 15, h/2); if (modeDropdownOpen) triangle(-4, 2, 4, 2, 0, -3); else triangle(-4, -2, 4, -2, 0, 3); popMatrix();
 }
 
-void drawLeaderSlot() {
-  int w = 120; int h = 30;
-  fill(200); textAlign(CENTER, BOTTOM); textSize(12); text("PITCH TRACKING", w/2, -8);
-  
-  stroke(100); strokeWeight(1);
-  if (chordLeaderState == 1) fill(0, 130, 180); // Azzurro se VOCE
-  else fill(50); // Grigio scuro se CHITARRA
-  rect(0, 0, w, h, 4);
-  
-  if (chordLeaderState == 1) fill(255);
-  else fill(0, 200, 255);
-  
-  textAlign(CENTER, CENTER); textSize(14);
-  text(chordLeaderState == 1 ? "VOICE" : "GUITAR", w/2, h/2);
-}
-
 void mousePressed() {
   
   int s2X = 420, s2Y = 500, w = 120, h = 30;
-  int s3X = 620, s3Y = 500; // MODO spostato a 620
-  int leaderX = 820, leaderY = 500; // LEADER inserito a 820
+  int s3X = 620, s3Y = 500; 
 
-  // --- CLICK PULSANTE CHORD LEADER ---
-  if (mouseX >= leaderX && mouseX <= leaderX + w && mouseY >= leaderY && mouseY <= leaderY + h) {
-    chordLeaderState = 1 - chordLeaderState; // Alterna 0 e 1
-    
-    OscMessage msgLeader = new OscMessage("/chordLeader");
-    msgLeader.add(chordLeaderState);
-    oscP5.send(msgLeader, superColliderDest);
-    
-    // Chiudi eventuali menu aperti
-    dropdownOpen = false;
-    modeDropdownOpen = false;
-    return;
-  }
-
-  // --- CLICK MENU A TENDINA ---
+  // DROPDOWN MENU CLICK
   if (mouseX >= s2X && mouseX <= s2X + w && mouseY >= s2Y && mouseY <= s2Y + h) { 
     dropdownOpen = !dropdownOpen;
     if (dropdownOpen) modeDropdownOpen = false; 

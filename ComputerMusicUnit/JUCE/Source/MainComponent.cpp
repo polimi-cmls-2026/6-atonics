@@ -4,7 +4,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-//==============================================================================
+
 MainComponent::MainComponent()
 {
     setSize(800, 600);
@@ -12,7 +12,7 @@ MainComponent::MainComponent()
     // Force ASIO drivers
     deviceManager.setCurrentAudioDeviceType("ASIO", true);
 
-    // 2. Protected standard call (ASIO)
+    // Protected standard call (ASIO)
     if (juce::RuntimePermissions::isRequired(juce::RuntimePermissions::recordAudio)
         && !juce::RuntimePermissions::isGranted(juce::RuntimePermissions::recordAudio))
     {
@@ -24,7 +24,7 @@ MainComponent::MainComponent()
         setAudioChannels(2, 2);
     }
 
-    // 3. Button to open audio settings
+    // Button to open audio settings
     settingsButton.setButtonText("Impostazioni Audio...");
     settingsButton.onClick = [this]
         {
@@ -62,15 +62,15 @@ MainComponent::~MainComponent()
 
 void MainComponent::timerCallback()
 {
-    // 1. Lettura thread-safe dei valori calcolati dal DSP
+    // Thread-safe read of the values computed by the DSP
     float currentVoice = uiPitchVoice.load(std::memory_order_relaxed);
     float currentGuitar = uiPitchGuitar.load(std::memory_order_relaxed);
 
-    // 2. Invio Inviluppi (già lo facevi)
+    // Send envelope values
     oscSender.send("/envelope/guitar", envGuitar);
     oscSender.send("/envelope/voice", envVoice);
 
-    // 3. Logica di invio OSC Voce (Spostata qui dal thread audio)
+    // Send vocal pitch values with OSC
     if (currentVoice > 0.0f && std::abs(currentVoice - lastSentVoicePitch) >= 0.1f)
     {
         juce::OSCMessage msgVoice("/vocalPitch");
@@ -80,7 +80,7 @@ void MainComponent::timerCallback()
         }
     }
 
-    // 4. Logica di invio OSC Chitarra (Spostata qui, con deadband in cents)
+	// Send guitar pitch values with OSC, with deadband to reduce jitter
     if (lastSentGuitarPitch > 0.0f && currentGuitar > 0.0f)
     {
         float centsDiff = 1200.0f * std::abs(std::log2(currentGuitar / lastSentGuitarPitch));
@@ -94,7 +94,7 @@ void MainComponent::timerCallback()
         }
     }
     else if (currentGuitar > 0.0f && lastSentGuitarPitch <= 0.0f) {
-        // Primo invio in assoluto
+		// First time we get a valid guitar pitch, send it immediately (no deadband)
         juce::OSCMessage msgGuitar("/guitarPitch");
         msgGuitar.addFloat32(currentGuitar);
         if (oscSender.send(msgGuitar)) {
@@ -102,7 +102,7 @@ void MainComponent::timerCallback()
         }
     }
 
-    // 5. Aggiornamento UI
+    // Update UI
     juce::String debugText = "Chitarra: " + juce::String(currentGuitar, 1) + " Hz\n" +
         "Voce: " + juce::String(currentVoice, 1) + " Hz";
 
@@ -112,6 +112,7 @@ void MainComponent::timerCallback()
     repaint();
 }
 
+// Setup function
 void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     currentSampleRate = sampleRate;
@@ -119,8 +120,8 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     writeIndex = 0;
     samplesSinceLastAnalysis = 0;
 
+    // Initialize HPS algorithm
     chordDetector = ChordPitchDetector(2048, 8192, sampleRate);
-
     chordDetector.rmsThreshold = 0.005f;
     chordDetector.minFreqHz = 80.0f;
 
@@ -142,6 +143,7 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     frameGuitar.assign(windowSize, 0.0f);
     sortedHistoryGuitar.assign(5, 0.0f);
 
+    // Compute LPF coefficient
     lpfAlpha = 1.0f - std::exp(-2.0f * M_PI * lpfCutoffHz / currentSampleRate);
 
     // Pre-calculate DSP coefficients
@@ -158,6 +160,7 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     envFollowerReleaseCoeff = std::exp(-1.0f / (envFollowerRelease * sampleRate));
 }
 
+// Main processing function
 void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
     if (bufferToFill.buffer->getNumChannels() < 2)
@@ -194,13 +197,14 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                 energyVoice += frameVoice[j] * frameVoice[j];
             }
 
+            // Compute RMS value, in order to analyze pitch only when significant signal is present
             float rmsVoice = std::sqrt(energyVoice / windowSize);
 
             if (rmsVoice > 0.015f)
             {
                 detectedPitchVoice = detectPitchYIN(frameVoice.data(), windowSize, currentSampleRate);
 
-                // Focus on vocal range
+                // Focus on vocal range (70Hz-1000Hz)
                 if (detectedPitchVoice >= 70.0f && detectedPitchVoice <= 1000.0f)
                 {
                     pitchHistoryVoice.erase(pitchHistoryVoice.begin());
@@ -209,19 +213,20 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                     std::copy(pitchHistoryVoice.begin(), pitchHistoryVoice.end(), sortedHistoryVoice.begin());
                     std::sort(sortedHistoryVoice.begin(), sortedHistoryVoice.end());
 
+                    // Compute median value and convert it to MIDI
                     float medianPitchHz = sortedHistoryVoice[sortedHistoryVoice.size() / 2];
                     float currentMidi = 69.0f + 12.0f * std::log2(medianPitchHz / 440.0f);
 
-                    // Riduciamo leggermente l'alpha (es. da 0.25 a 0.4) per renderlo più reattivo
                     float alpha = 0.4f;
 
                     if (smoothedMidiVoice < 0.0f) {
-                        smoothedMidiVoice = currentMidi; // Snap immediato al primo frame valido
+						smoothedMidiVoice = currentMidi; // Initialize smoothed MIDI with the first detected value
                     }
                     else {
-                        smoothedMidiVoice = alpha * currentMidi + (1.0f - alpha) * smoothedMidiVoice;
+						smoothedMidiVoice = alpha * currentMidi + (1.0f - alpha) * smoothedMidiVoice; // Exponential smoothing to reduce jitter in MIDI values
                     }
 
+					//Reconvert to Hz, snap to grid and send to UI
                     float smoothedHz = 440.0f * std::pow(2.0f, (smoothedMidiVoice - 69.0f) / 12.0f);
                     float perfectlyTunedPitch = snapToGrid(smoothedHz);
 
@@ -230,14 +235,11 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
             }
             else
             {
-                // --- LA MODIFICA CRITICA: RESET DEI FILTRI NEL SILENZIO ---
-                // Se la voce scende sotto la soglia RMS, azzeriamo la memoria.
-                // Questo previene scivolamenti di pitch (portamento) tra una frase e l'altra.
-
+				// If the vocal signal drops below the RMS threshold, we reset the memory of the filters.
                 smoothedMidiVoice = -1.0f;
                 lastSnappedMidiVoice = -1.0f;
 
-                // Riempiamo il filtro mediano con 0.0f per uccidere code residue
+				//Fill the median array with zeros to kill any residual tail
                 std::fill(pitchHistoryVoice.begin(), pitchHistoryVoice.end(), 0.0f);
             }
 
@@ -245,17 +247,15 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         }
 
         // 2. Process Guitar
-        // 2. Process Guitar
         float guitarProcessed = applyGate(guitarIn[i], gateEnvGuitar, gateGainGuitar, gateReleaseCoeffGuitar);
         guitarProcessed = applyCompressor(guitarProcessed, compEnvGuitar);
 
-        // APPLICAZIONE DEL LPF PER ISOLARE LA FONDAMENTALE
+        // Apply LPF to isolate low notes
         lpfState = lpfState + lpfAlpha * (guitarProcessed - lpfState);
         float guitarFilteredForAnalysis = lpfState;
 
         applyEnvelopeFollower(guitarFilteredForAnalysis, envGuitar);
 
-        // Salviamo il segnale FILTRATO nel buffer per l'analisi FFT
         circularBuffer[writeIndex] = guitarFilteredForAnalysis;
 
         writeIndex = (writeIndex + 1) % windowSize;
@@ -268,16 +268,16 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                 frameGuitar[j] = circularBuffer[(writeIndex + j) % windowSize];
             }
 
-            // CHORD PITCH DETECTION (HPS + WEIGHTING)
+            // CHORD PITCH DETECTION (HPS)
             float chordRoot = chordDetector.detectChordRoot(frameGuitar.data(), windowSize);
 
-            // Focus on guitar range
+            // Focus on guitar range (80Hz-800Hz)
             if (chordRoot >= 80.0f && chordRoot <= 800.0f)
             {
-                // 1. Quantizzazione alla nota più vicina con isteresi
+                // Quantization to the closest MIDI note
                 float perfectlyTunedGuitar = snapToGridGuitar(chordRoot);
 
-                // 2. Filtro Mediano a 5 frame per uccidere i glitch improvvisi (es. ottave errate)
+                // Median filter (5 samples)
                 pitchHistoryGuitar.erase(pitchHistoryGuitar.begin());
                 pitchHistoryGuitar.push_back(perfectlyTunedGuitar);
 
@@ -286,14 +286,14 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 
                 float medianPitchGuitar = sortedHistoryGuitar[sortedHistoryGuitar.size() / 2];
 
-                // 3. Output
+                // Output
                 uiPitchGuitar.store(medianPitchGuitar, std::memory_order_relaxed);
             }
 
             samplesSinceLastAnalysis = 0;
         }
 
-        // Output
+        // Audio Output
         leftOut[i] = voiceProcessed;
         rightOut[i] = guitarProcessed;
     }
@@ -313,8 +313,9 @@ void MainComponent::resized()
     envDebugLabel.setBounds(10, 100, 300, 30);
 }
 
-// --- DSP IMPLEMENTATIONS ---
+// DSP Functions
 
+//Noise gate
 float MainComponent::applyGate(float inputSample, float& envelope, float& gainState, float releaseCoeff)
 {
     float rectified = std::abs(inputSample);
@@ -334,6 +335,7 @@ float MainComponent::applyGate(float inputSample, float& envelope, float& gainSt
     return inputSample * gainState;
 }
 
+//Compressor
 float MainComponent::applyCompressor(float inputSample, float& envelope)
 {
     float amplitude = std::abs(inputSample) + 1e-6f;
@@ -352,6 +354,7 @@ float MainComponent::applyCompressor(float inputSample, float& envelope)
     return inputSample * gainLinear * compMakeupGain;
 }
 
+//Envelope follower
 float MainComponent::applyEnvelopeFollower(float inputSample, float& envelope)
 {
     float rectified = std::abs(inputSample);
@@ -363,7 +366,7 @@ float MainComponent::applyEnvelopeFollower(float inputSample, float& envelope)
     return envelope;
 }
 
-// --- PITCH DETECTION (YIN) ---
+// PITCH DETECTION (YIN) for vocals
 
 float MainComponent::detectPitchYIN(const float* audioBuffer, int bufferSize, double sampleRate)
 {
@@ -420,7 +423,7 @@ float MainComponent::detectPitchYIN(const float* audioBuffer, int bufferSize, do
     return static_cast<float>(sampleRate / betterTau);
 }
 
-// --- OSC & PRESETS ---
+// OSC Message Handling
 
 void MainComponent::oscMessageReceived(const juce::OSCMessage& message)
 {
@@ -436,37 +439,10 @@ void MainComponent::oscMessageReceived(const juce::OSCMessage& message)
         oscSender.send("/blend", blendValue);
         DBG("Blend: " + juce::String(blendValue));
     }
-    else if (message.getAddressPattern() == "/preset" && message[0].isInt32())
-    {
-        loadPreset(message[0].getInt32());
-    }
 }
 
-void MainComponent::loadPreset(int presetIndex)
-{
-    if (presetIndex < 0 || presetIndex >= static_cast<int>(presets.size()))
-        return;
 
-    currentPreset = presetIndex;
-    const Preset& p = presets[presetIndex];
-
-    gateThreshold = p.gateThreshold;
-    compThreshold = p.compThreshold;
-    compRatio = p.compRatio;
-    compMakeupGain = p.compMakeupGain;
-    envFollowerRelease = p.envFollowerRelease;
-
-    envFollowerReleaseCoeff = std::exp(-1.0f / (envFollowerRelease * currentSampleRate));
-    oscSender.send("/preset", presetIndex);
-
-    juce::MessageManager::callAsync([this, presetIndex]()
-        {
-            presetLabel.setText("Preset: " + juce::String(presetIndex + 1), juce::dontSendNotification);
-        });
-
-    DBG("Preset loaded: " + juce::String(presetIndex + 1));
-}
-
+//Quantization Function with Hysteresis (Vocal)
 float MainComponent::snapToGrid(float pitchHz)
 {
     if (pitchHz <= 0.0f) return 0.0f;
@@ -477,8 +453,7 @@ float MainComponent::snapToGrid(float pitchHz)
         lastSnappedMidiVoice = std::round(currentMidiNote);
     }
     else {
-        // Soglia abbassata a 0.55 per permettere transizioni vocali naturali
-        // mantenendo al contempo la stabilità sui confini
+		// Minimum difference of 0.55 semitones to change the snapped note, to prevent jitter around the threshold.
         if (std::abs(currentMidiNote - lastSnappedMidiVoice) > 0.55f) {
             lastSnappedMidiVoice = std::round(currentMidiNote);
         }
@@ -487,6 +462,7 @@ float MainComponent::snapToGrid(float pitchHz)
     return 440.0f * std::pow(2.0f, (lastSnappedMidiVoice - 69.0f) / 12.0f);
 }
 
+//Quantization Function with Hysteresis (Guitar)
 float MainComponent::snapToGridGuitar(float pitchHz)
 {
     if (pitchHz <= 0.0f) return 0.0f;
@@ -498,9 +474,7 @@ float MainComponent::snapToGridGuitar(float pitchHz)
         lastSnappedMidiGuitar = std::round(currentMidiNote);
     }
     else
-    {
-        // Aumenta la soglia a 1.2 semitoni o più. 
-        // L'algoritmo deve essere *molto* sicuro per cambiare l'armonia di base.
+    {   //High hysteresis (0.8 semitones)
         if (std::abs(currentMidiNote - lastSnappedMidiGuitar) > 0.8f)
         {
             lastSnappedMidiGuitar = std::round(currentMidiNote);
@@ -510,6 +484,7 @@ float MainComponent::snapToGridGuitar(float pitchHz)
     return 440.0f * std::pow(2.0f, (lastSnappedMidiGuitar - 69.0f) / 12.0f);
 }
 
+//Send OSC pitch messages to SuperCollider
 void MainComponent::sendVocalPitchToSuperCollider(float pitchInHz)
 {
 	// If value is close to the last sent pitch, ignore it to prevent micro-fluctuations

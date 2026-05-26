@@ -9,65 +9,60 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// =============================================================================
-//  ChordPitchDetector — HPS + FFT optimisé pour usage live
-//
-//  Latence totale visée : ~75 ms (FFT 2048, médian 3 frames, hop = FFT/2)
-//
-//  Optimisations clés :
-//   1. Filtre médian réduit à 3 frames (au lieu de 5)
-//   2. Reset dynamique du filtre sur détection d'attaque (transitoire RMS)
-//   3. Deadband en cents pour éviter les micro-envois OSC inutiles
-//   4. Fenêtre de Hann pré-calculée à l'init (pas de malloc dans l'audio thread)
-//   5. FFT Cooley-Tukey in-place — aucune dépendance externe
-// =============================================================================
+//  ChordPitchDetector — HPS + FFT optimized for live guitar playing
+// It's a monophonic algorithm but we optimized it in order to detect the root note even when playing full chords. It doesn't work with chord inversions (it will detect the lowest note)
+// For the best results, play the bass note first and strum/pluck the rest of the chord after.
+
 
 class ChordPitchDetector
 {
 public:
-    // Aggiungiamo windowSize (2048 per il live) e fftSize (8192 per la risoluzione)
+	// fftSize different from windowSize: we apply the window to the first 2048 samples, then zero-pad to 8192 for better frequency resolution.
     ChordPitchDetector(int windowSize = 2048, int fftSize = 8192, double sampleRate = 44100.0)
         : windowSize(windowSize), fftSize(fftSize), sampleRate(sampleRate)
     {
         hannWindow.resize(windowSize);
-        // La finestra si applica solo ai campioni reali
+		// Window applied only on real samples, zero-padding will be applied after
         for (int i = 0; i < windowSize; ++i)
             hannWindow[i] = 0.5f * (1.0f - std::cos(2.0f * (float)M_PI * i / (windowSize - 1)));
 
-        fftBuffer.resize(fftSize); // Ora è 8192
+        fftBuffer.resize(fftSize);
         magnitudes.resize(fftSize / 2 + 1);
         hpsSpectrum.resize(fftSize / 2 + 1);
 
+		//Initialize median history with zeros
         medianHistory.assign(medianFrames, 0.0f);
         prevRms = 0.0f;
     }
 
+	// Main processing function: takes a frame of audio samples and returns the detected chord root frequency in Hz (or 0.0f if no chord detected)
     float detectChordRoot(const float* frame, int frameSize)
     {
         if (frameSize != windowSize)
             return 0.0f;
 
-        // --- 1. Calcul RMS (rimane invariato) ---
+        // Compute RMS
         float energy = 0.0f;
         for (int i = 0; i < windowSize; ++i)
             energy += frame[i] * frame[i];
         float rms = std::sqrt(energy / windowSize);
 
+		// If RMS is below threshold, consider it silence and reset median history. Otherwise, check for attack transients.
         if (rms < rmsThreshold) {
             prevRms = rms;
             return 0.0f;
         }
 
+		// Compute RMS ratio to detect attack transients.
         float rmsRatio = (prevRms > 1e-6f) ? (rms / prevRms) : 999.0f;
 
         if (rmsRatio > attackRatioThreshold) {
-            // Invece di resettare, ignora i prossimi 2-3 frame (circa 45-70ms) 
-            // finché il suono non diventa periodico.
+            //If it's a transient, ignore the next 3 frames to prevent random values
             transientHoldFrames = 3;
         }
         prevRms = rms;
 
-        // Se siamo nel transitorio, restituisci l'ultimo pitch valido (mediana attuale)
+		// If we're in the transient hold period, return the median of the last few frames to avoid erratic pitch detections. If we don't have enough history, return 0.
         if (transientHoldFrames > 0) {
             transientHoldFrames--;
             if (!medianHistory.empty()) {
@@ -78,24 +73,22 @@ public:
             return 0.0f;
         }
 
-        // --- 3. Fenêtrage de Hann e ZERO-PADDING ---
-        // Copia i campioni reali
+		// Apply Hann window to the input frame and prepare the FFT buffer with zero-padding
         for (int i = 0; i < windowSize; ++i)
             fftBuffer[i] = { frame[i] * hannWindow[i], 0.0f };
 
-        // Riempi di zeri la parte rimanente (zero-padding)
+        // Zero-pad
         for (int i = windowSize; i < fftSize; ++i)
             fftBuffer[i] = { 0.0f, 0.0f };
 
-        // --- 4. FFT in-place (calcolata su 8192 punti) ---
+		// Compute FFT in-place
         computeFFT(fftBuffer);
 
-        // --- 5. Spectre de magnitudes ---
+		// Magnitude calculation for positive frequencies only (0 to Nyquist)
         for (int i = 0; i <= fftSize / 2; ++i)
             magnitudes[i] = std::abs(fftBuffer[i]);
 
-        // --- 6. HPS (Harmonic Product Spectrum) ---
-        //    Plage cible : 60–800 Hz (cordes basses + aigu guitare standard)
+        // HPS (Harmonic Product Spectrum)
         const int numHarmonics = 4;
         const int minBin = std::max(1, static_cast<int>(minFreqHz * fftSize / sampleRate));
         const int maxBin = static_cast<int>(maxFreqHz * fftSize / sampleRate);
@@ -113,14 +106,10 @@ public:
             }
         }
 
-        // ==========================================================
-        // --- 6.5 SPECTRAL BASS WEIGHTING (LA NOSTRA MODIFICA) ---
-        // Forziamo matematicamente l'HPS a preferire le frequenze gravi.
-        // Fino a 160Hz (circa un Mi/Re3) il peso è 1.0. 
-        // Da 160Hz a 400Hz sfuma fino a 0.1, penalizzando i cantini.
-        // ==========================================================
-        float fadeStartHz = 120.0f; // Inizia il fade molto prima (dopo il Si2)
-        float fadeEndHz = 220.0f; // Abbattimento quasi totale prima del Do centrale
+        // Spectral Bass Weighting
+        // We favour the lower frequencies to help detect the chord root
+        float fadeStartHz = 120.0f; // Fade begins above B2
+        float fadeEndHz = 220.0f; // Pretty steep curve (nothing above A3)
 
         for (int i = minBin; i <= maxBin; ++i)
         {
@@ -130,15 +119,15 @@ public:
             if (freq > fadeStartHz)
             {
                 if (freq < fadeEndHz)
-                    // Curva esponenziale/quadratica per un taglio più drastico
+                    // Exponential curve
                     weight = std::pow(1.0f - ((freq - fadeStartHz) / (fadeEndHz - fadeStartHz)), 2.0f);
                 else
-                    weight = 0.01f; // Punizione severa, non 0.1
+                    weight = 0.01f;
             }
             hpsSpectrum[i] *= weight;
         }
 
-        // --- 7. Recherche du pic dans la plage cible ---
+		// Search for the peak in the HPS spectrum
         int peakBin = minBin;
         float peakVal = hpsSpectrum[minBin];
         for (int i = minBin + 1; i <= maxBin; ++i)
@@ -150,7 +139,7 @@ public:
             }
         }
 
-        // --- 8. Interpolation parabolique (précision sub-bin) ---
+		// Parabolic Interpolation for better frequency estimation
         float refinedBin = static_cast<float>(peakBin);
         if (peakBin > minBin && peakBin < maxBin)
         {
@@ -164,7 +153,7 @@ public:
 
         float rawPitch = static_cast<float>(refinedBin * sampleRate / fftSize);
 
-        // --- 9. Filtre médian 3 frames ---
+        // Median filter (3 samples) to stabilize the pitch detection
         medianHistory.erase(medianHistory.begin());
         medianHistory.push_back(rawPitch);
 
@@ -173,19 +162,17 @@ public:
         return sorted[sorted.size() / 2];
     }
 
-    // -------------------------------------------------------------------------
-    //  Paramètres ajustables publiquement avant / pendant l'usage
-    // -------------------------------------------------------------------------
-    float rmsThreshold      = 0.008f;   // Seuil silence (ajuste selon ton préamp)
-    float attackRatioThreshold = 2.5f;  // Ratio RMS déclenchant un reset médian
-    float minFreqHz = 80.0f;    // Leggermente sotto il Mi grave (82.4 Hz)
-    float maxFreqHz = 300.0f;   // Taglia fuori tutto ciò che sta sopra il Re4
+	// Parameters (adjust these according to your setup and preferences)
+	float rmsThreshold = 0.008f;   // Minimum RMS to consider as a valid chord (adjust based on your input level)
+	float attackRatioThreshold = 2.5f;  // RMS Ratio threshold
+	float minFreqHz = 80.0f;    // Just below E2, the lowest note on a standard guitar.
+    float maxFreqHz = 300.0f;   // Just above D4, the highest note we want to consider
 
 private:
     int    windowSize;
     int    fftSize;
     double sampleRate;
-    int    medianFrames = 3;            // 3 frames = ~70 ms de latence médian à 44100/hop1024
+    int    medianFrames = 3;
     int transientHoldFrames = 0;
 
     std::vector<float>               hannWindow;
@@ -196,15 +183,13 @@ private:
 
     float prevRms;
 
-    // Vide le filtre médian — appelé sur détection d'attaque
+	// Reset the median history (useful when we detect silence to avoid old values affecting the next detection)
     void resetMedianHistory()
     {
         std::fill(medianHistory.begin(), medianHistory.end(), 0.0f);
     }
 
-    // -------------------------------------------------------------------------
-    //  FFT Cooley-Tukey radix-2 in-place — pas d'allocation dans l'audio thread
-    // -------------------------------------------------------------------------
+	//FFT implementation (Cooley-Tukey in-place radix-2)
     void computeFFT(std::vector<std::complex<float>>& x)
     {
         int N = static_cast<int>(x.size());
