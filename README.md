@@ -1,4 +1,4 @@
-# Guitar-Guided Diatonic Harmonizer
+# 6-Atonics: Guitar-Guided Diatonic Harmonizer
 
 Group project realized for the **Computer Music: Languages and Systems** course, Academic Year 2025/2026, Politecnico di Milano.
 
