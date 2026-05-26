@@ -174,7 +174,7 @@ s.waitForBoot({
             BPF.ar(shiftedSource, f, 0.15) * formants[i];
         }).sum;
 
-        harmonies = HPF.ar(harmonies, 120);
+        harmonies = HPF.ar(harmonies, 80);
 
         // High shelf boost (+6dB) above 4000 Hz to open up the top end
         harmonies = BHiShelf.ar(harmonies, 4000, 1.0, 6.0);
