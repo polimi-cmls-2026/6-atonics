@@ -32,12 +32,12 @@ Acts as an advanced polyphonic sampler and synthesizer via the `trueHarmonizer` 
 ### 2. Graphical Feedback Unit (Processing)
 The interactive graphical interface developed in Processing acts as a visual control center and a software bridge between the hardware and the Computer Music Unit.
 * **Geometric Complexity Visualization:** A central polygon dynamically varies the number of its vertices and spatial configuration based on the selected harmonic level (2 vertices = Power chord, 3 = Triad, 4 = Tetrad, 5 = Extended ninth).
-* **Parametric Feedback:** Includes an arc-shaped circular indicator for the Dry/Wet level, real-time visualizers of the extracted frequencies, interactive dropdown menus for Tonic and Mode selection, and a toggle to define the *Pitch Tracking Leader* (whether to drive the harmonizer via guitar or via vocal pitch).
+* **Parametric Feedback:** Includes an arc-shaped circular indicator for the Dry/Wet level, a visualizer of the chord complexity on a default piano scale, and interactive dropdown menus for Tonic and Mode selection.
 * **Reactive Freeze Effect:** Generates a perimeter graphic freezing animation based on two-dimensional Perlin noise when the chord lock mode is activated.
 
 ### 3. Interaction System Unit (Arduino Hardware)
 The physical unit captures the analog and digital interactions of the performer on stage:
-* **Managed Inputs:** A joystick (complexity selection), a linear potentiometer (effect Dry/Wet mix control), and a push button/pedal (Freeze function activation).
+* **Managed Inputs:** A joystick (complexity selection), a rotary encoder (effect Dry/Wet mix control), and a push button/pedal (Freeze function activation).
 * **Serial Communication:** Data is structured into high-frequency compacted strings in the format `DATA,encoder_value,potentiometer_value,button_state\n` and transmitted via USB at 115200 baud to the serial port read by Processing.
   
 ## Setup and Execution
