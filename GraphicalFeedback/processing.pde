@@ -91,13 +91,13 @@ void draw() {
   background(lerpColor(normalBackground, iceBackground, freezeIntensity));
   
   // STATUS TEXTS
-  fill(255);
-  textAlign(LEFT, TOP);
-  textSize(12);
-  text("Bridge Serial -> OSC", 10, 10);
-  text("Vertices (Encoder): " + targetPot, 10, 30);
-  text("Potentiometer (Wet): " + wetValue, 10, 50);
-  text("Button: " + button, 10, 70);
+  //fill(255);
+  //textAlign(LEFT, TOP);
+  //textSize(12);
+  //text("Bridge Serial -> OSC", 10, 10);
+  //text("Vertices (Encoder): " + targetPot, 10, 30);
+  //text("Potentiometer (Wet): " + wetValue, 10, 50);
+  //text("Button: " + button, 10, 70);
 
   // GEOMETRY TARGET CALCULATION
   float R = 100;
@@ -223,6 +223,14 @@ void draw() {
   textSize(14); 
   text("WET", 0, 85); 
   popMatrix();
+  
+  // 3. TITLE
+  pushStyle();
+  fill(0, 200, 255);
+  textAlign(CENTER, CENTER);
+  textSize(64);
+  text("6-Atonics", width / 2, height / 2 - 200); 
+  popStyle();
 
   // BOTTOM SLOTS
   pushMatrix();
